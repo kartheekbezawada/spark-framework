@@ -10,7 +10,7 @@ import dbutils
 class DatabricksConnector:
     def __init__(self, spark, key_vault_scope):
         self.spark = spark
-        self.key_vault_scope = key_vault_scope
+        self.key_vault_scope = "key_vault_scope_migration"
         self.jdbc_hostname = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-server-hostname")
         self.jdbc_database = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-database-name")
         self.jdbc_username = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-username")
@@ -44,13 +44,14 @@ class DatabricksConnector:
             raise e
         return df
     
+    #write to blob storage maximun 1000 records per file
     def write_to_blob_storage(self, df, blob_path):
         try:
             df.write \
                 .mode("append") \
-                .option("fs.azure.disable.check.access", "true") \
                 .options(**self.blob_storage_config) \
-                .parquet(blob_path)
+                .option("maxRecordsPerFile", 1000) \
+                .parquet(blob_path) 
         except Exception as e:
             print(f"Error writing to blob storage: {e}")
             raise e            
@@ -68,3 +69,4 @@ if __name__ == "__main__":
     table_names = ["dbo.SalesLT.Customer", "dbo.SalesLT.Product", "dbo.SalesLT.Order"]
     db_connector.migrate_data(table_names)
     spark.stop()
+    
