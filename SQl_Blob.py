@@ -62,11 +62,32 @@ class DatabricksConnector:
             blob_path = f"{self.blob_storage_url}/{table_name.replace('.', '_')}"
             self.write_to_blob_storage(df, blob_path)
             print(f"Data migrated for table: {table_name}") 
+    
+    #rad from blob storage where blob path is actual folder and recursive is true
+    def read_from_blob_storage(self, blob_path):
+        try:
+            df = self.spark.read \
+                .format("parquet") \
+                .options(**self.blob_storage_config) \
+                .option("recursiveFileLookup", "true") \
+                .option("inferSchema", "true") \
+                .option("header", "true") \
+                .load(blob_path)
+        except Exception as e:
+            print(f"Error reading from blob storage: {e}")
+            raise e
+        return df
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("DataMigration").getOrCreate()
     db_connector = DatabricksConnector(spark, "databricks-sql-blob-storage")
     table_names = ["dbo.SalesLT.Customer", "dbo.SalesLT.Product", "dbo.SalesLT.Order"]
     db_connector.migrate_data(table_names)
+    blob_path = f"{db_connector.blob_storage_url}/dbo_SalesLT_Customer"
+    df = db_connector.read_from_blob_storage(blob_path)
+    df.show()
+    df.printSchema()
+    df.count()
+    df.describe().show()
     spark.stop()
     
