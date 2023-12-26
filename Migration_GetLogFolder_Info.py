@@ -19,12 +19,6 @@ class BlobFolderInfoLogger:
         self.blob_service_client = BlobServiceClient(account_url=f"https://{self.blob_account_name}.blob.core.windows.net", 
                                                      credential=self.blob_account_key)
 
-    def _get_blob_storage_url(self):
-        return f"wasbs://{self.blob_container_name}@{self.blob_account_name}.blob.core.windows.net"
-
-    def _get_blob_storage_config(self):
-        return {f"fs.azure.account.key.{self.blob_account_name}.blob.core.windows.net": self.blob_account_key}
-
     def _get_jdbc_url(self):
         return f"jdbc:sqlserver://{self.jdbc_hostname};database={self.jdbc_database}"
 
