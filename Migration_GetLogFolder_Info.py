@@ -1,6 +1,8 @@
 from pyspark.sql import SparkSession, Row
 import os
 import dbutils
+from azure.storage.blob import BlobServiceClient, ContainerClient
+
 
 class BlobFolderInfoLogger:
     def __init__(self, spark, key_vault_scope):
@@ -14,6 +16,8 @@ class BlobFolderInfoLogger:
         self.blob_account_name = dbutils.secrets.get(scope="key_vault_scope", key="blob-storage-account-name")
         self.blob_account_key = dbutils.secrets.get(scope="key_vault_scope", key="blob-storage-account-key")
         self.blob_container_name = dbutils.secrets.get(scope="key_vault_scope", key="blob-container-name")
+        self.blob_service_client = BlobServiceClient(account_url=f"https://{self.blob_account_name}.blob.core.windows.net", 
+                                                     credential=self.blob_account_key)
 
     def _get_blob_storage_url(self):
         return f"wasbs://{self.blob_container_name}@{self.blob_account_name}.blob.core.windows.net"
@@ -34,69 +38,67 @@ class BlobFolderInfoLogger:
     def _get_file_name(self, file_path):
         return os.path.basename(file_path)
 
-    def get_folder_info(self):
-        # Setting the configuration for Blob Storage
-        self.spark.conf.setAll(self._get_blob_storage_config())
+    def get_and_log_folder_info(self, container_client, folder_path, log_table_name):
+        container_client = self.blob_service_client.get_container_client(self.blob_container_name)
+        try:
+            folder_info = {
+                "folder_path": folder_path,
+                "num_files": 0,
+                "file_info": [],
+                "total_rows": 0,
+                "total_size_gb": 0.0  # Total size of all files in GB
+            }
+            for blob in container_client.list_blobs(name_starts_with=folder_path):
+                file_path = f"wasbs://{self.blob_container_name}@{self.blob_account_name}.blob.core.windows.net/{blob.name}"
+                file_rows = self.count_rows_in_parquet_file(file_path)
+                file_size_gb = blob.size / (1024 * 1024 * 1024)  # Convert from bytes to GB
 
-        # Accessing Blob Storage directly via WASB
-        blob_storage_url = self._get_blob_storage_url()
-        # Assuming the container contains only Parquet files or you're only interested in Parquet files
-        files_and_dirs = self.spark.read.format("parquet").load(blob_storage_url).rdd.map(lambda x: x._jvm.org.apache.hadoop.fs.Path(x.getPath.toString())).collect()
-        folder_info = {}
-
-        for file_path in files_and_dirs:
-            file_size_mb = self._get_file_size_mb(file_path)  # This needs a method to get the size from WASB path
-            file_rows = self.get_row_count(file_path)
-            folder_path, file_name = os.path.split(file_path)
-
-            if folder_path not in folder_info:
-                folder_info[folder_path] = {
-                    "files": [{
-                        "file_name": file_name,
-                        "file_size_mb": file_size_mb,
-                        "file_rows": file_rows
-                    }],
-                    "total_rows": file_rows,
-                    "total_size_gb": file_size_mb / 1024
-                }
-            else:
-                folder_info[folder_path]["files"].append({
-                    "file_name": file_name,
-                    "file_size_mb": file_size_mb,
-                    "file_rows": file_rows
+                folder_info["num_files"] += 1
+                folder_info["total_rows"] += file_rows
+                folder_info["total_size_gb"] += file_size_gb  # Accumulate total size
+                folder_info["file_info"].append({
+                    "file_name": blob.name,
+                    "file_size_bytes": blob.size,
+                    "file_size_gb": file_size_gb,
+                    "num_rows": file_rows
                 })
-                folder_info[folder_path]["total_rows"] += file_rows
-                folder_info[folder_path]["total_size_gb"] += file_size_mb / 1024
 
-        return folder_info
+            folder_info_df = self.spark.createDataFrame([Row(
+                folder_path=folder_info['folder_path'],
+                num_files=folder_info['num_files'],
+                total_rows=folder_info['total_rows'],
+                total_size_gb=folder_info['total_size_gb'],
+                timestamp=datetime.now()
+            )])
+            folder_info_df.write \
+                .format("jdbc") \
+                .option("url", self.sql_mi_jdbc_url) \
+                .option("dbtable", log_table_name) \
+                .option("user", self.sql_mi_properties["user"]) \
+                .option("password", self.sql_mi_properties["password"]) \
+                .mode("append") \
+                .save()
 
-    def log_folder_info(self, folder_info):
-        rows = []
-        for folder_path, info in folder_info.items():
-            for file in info["files"]:
-                rows.append(Row(
-                    folder_path=folder_path,
-                    file_name=file["file_name"],
-                    file_size_mb=file["file_size_mb"],
-                    file_rows=file["file_rows"],
-                    total_rows_in_folder=info["total_rows"],
-                    folder_size_gb=info["total_size_gb"]
-                ))
+            return folder_info
+        except Exception as e:
+            self.log_error(f"Error getting and logging folder info for {folder_path}: {str(e)}")
+            return None
 
-        df = self.spark.createDataFrame(rows)
-        df.write \
-            .format("jdbc") \
-            .option("url", self._get_jdbc_url()) \
-            .option("dbtable", "folder_info_log") \
-            .option("user", self.jdbc_username) \
-            .option("password", self.jdbc_password) \
-            .mode("append") \
-            .save()
+    # Implement log_error method to handle and log errors
+    def log_error(self, message):
+        # Placeholder for error logging implementation
+        print(message)
 
 if __name__ == "__main__":
+    spark = SparkSession.builder.appName("BlobFolderInfoLogger").getOrCreate()
+    key_vault_scope = "your_key_vault_scope"  # Replace with your actual key vault scope
+
     logger = BlobFolderInfoLogger(spark, key_vault_scope)
-    folder_info = logger.get_folder_info()
-    #Print the folder information for testing purposes
+    container_client = blob_service_client.get_container_client(container_name)
+    folder_path = "your_folder_path"
+    log_table_name = "your_log_table_name"
+
+    folder_info = logger.get_and_log_folder_info(container_client, folder_path, log_table_name)
     print("Folder Information:", folder_info)
-    logger.log_folder_info(folder_info)
+
     spark.stop()
