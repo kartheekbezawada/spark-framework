@@ -77,6 +77,22 @@ class DatabricksConnector:
             print(f"Error reading from blob storage: {e}")
             raise e
         return df
+    # write to sql server by creating table, table not present in sql server
+    
+    def write_to_sql_server(self, df, table_name):
+        try:
+            df.write \
+                .format("jdbc") \
+                .option("url", self._get_jdbc_url()) \
+                .option("dbtable", table_name) \
+                .option("user", self.jdbc_username) \
+                .option("password", self.jdbc_password) \
+                .mode("append") \
+                .save()
+        except Exception as e:
+            print(f"Error writing to SQL Server: {e}")
+            raise e
+    
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("DataMigration").getOrCreate()
@@ -89,5 +105,6 @@ if __name__ == "__main__":
     df.printSchema()
     df.count()
     df.describe().show()
+    df.write_to_sql_server(df, table_name = f"{dbo}.blob_path")
     spark.stop()
     
