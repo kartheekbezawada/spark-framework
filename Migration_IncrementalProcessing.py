@@ -92,30 +92,16 @@ class DataMigrator:
                 directories_and_files[directory] = []
             directories_and_files[directory].append(blob.name)
         return directories_and_files
-
-    def process_folder(self, folder_path, log_table_name):
-        folder_info = self.get_and_log_folder_info(self.alpha_blob_service_client, folder_path, log_table_name)
-        if folder_info:
-            for file_info in folder_info["file_info"]:
-                file_path = file_info["file_name"]
-                df = self.read_data_from_storage(file_path)
-                self.write_to_sql_mi(df, folder_path)
-                self.copy_to_beta_storage(df, file_path)
-            self.write_tracking_info(folder_path)
-
-    def write_to_sql_mi(self, dataframe, table_name):
-        try:
-            dataframe.write \
-                .format("jdbc") \
-                .option("url", self.sql_mi_jdbc_url) \
-                .option("dbtable", table_name) \
-                .option("user", self.sql_mi_properties["user"]) \
-                .option("password", self.sql_mi_properties["password"]) \
-                .mode("append") \
-                .save()
-        except Exception as e:
-            self.log_error(f"Error writing to SQL MI: {str(e)}")
     
+    def read_data_from_storage(self, file_path):
+        file_extension = os.path.splitext(file_path)[1].lower()
+        if file_extension == ".parquet":
+            return self.spark.read.parquet(file_path)
+        elif file_extension == ".csv":
+            return self.spark.read.csv(file_path, header=True, inferSchema=True)
+        else:
+            raise ValueError(f"Unsupported file format: {file_extension}")
+       
     def copy_to_beta_storage(self, dataframe, file_path):
         try:
          file_format = "parquet"  # or "csv", etc., based on your requirement
@@ -139,14 +125,31 @@ class DataMigrator:
         except Exception as e:
             self.log_error(f"Error writing tracking info for {folder_path}: {str(e)}")
 
-    def read_data_from_storage(self, file_path):
-        file_extension = os.path.splitext(file_path)[1].lower()
-        if file_extension == ".parquet":
-            return self.spark.read.parquet(file_path)
-        elif file_extension == ".csv":
-            return self.spark.read.csv(file_path, header=True, inferSchema=True)
-        else:
-            raise ValueError(f"Unsupported file format: {file_extension}")
+    def write_to_sql_mi(self, dataframe, table_name):
+        try:
+            dataframe.write \
+                .format("jdbc") \
+                .option("url", self.sql_mi_jdbc_url) \
+                .option("dbtable", table_name) \
+                .option("user", self.sql_mi_properties["user"]) \
+                .option("password", self.sql_mi_properties["password"]) \
+                .mode("append") \
+                .save()
+        except Exception as e:
+            self.log_error(f"Error writing to SQL MI: {str(e)}")
+            
+    def process_folder(self, folder_path, log_table_name):
+        folder_info = self.get_and_log_folder_info(self.alpha_blob_service_client, folder_path, log_table_name)
+        if folder_info:
+            for file_info in folder_info["file_info"]:
+                file_path = file_info["file_name"]
+                df = self.read_data_from_storage(file_path)
+                self.write_to_sql_mi(df, folder_path)
+                self.copy_to_beta_storage(df, file_path)
+            self.write_tracking_info(folder_path)
+ 
+
+
 
     def get_processed_paths(self):
         try:
