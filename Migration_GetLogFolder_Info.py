@@ -88,11 +88,10 @@ if __name__ == "__main__":
     key_vault_scope = "your_key_vault_scope"  # Replace with your actual key vault scope
 
     logger = BlobFolderInfoLogger(spark, key_vault_scope)
-    container_client = blob_service_client.get_container_client(container_name)
-    folder_path = "your_folder_path"
-    log_table_name = "your_log_table_name"
+    folder_path = "your_folder_path"  # Replace with the actual folder path
+    log_table_name = "your_log_table_name"  # Replace with the actual log table name
 
-    folder_info = logger.get_and_log_folder_info(container_client, folder_path, log_table_name)
+    folder_info = logger.get_and_log_folder_info(folder_path, log_table_name)
     print("Folder Information:", folder_info)
 
     spark.stop()
