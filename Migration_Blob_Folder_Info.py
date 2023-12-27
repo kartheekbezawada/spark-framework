@@ -56,7 +56,21 @@ class BlobFolderInfo:
         except Exception as e:
             print(f"Error getting sizes of folders in container {container_name}: {e}")
             raise e
-        
+    
+    def get_top_n_folders_by_size(self, container_name, n):
+        try:
+            # Get folder sizes in MB
+            folder_sizes_in_mb = self.get_folders_size_in_mb(container_name)
+
+            # Sort the folders by size and get the top 'n'
+            top_folders = sorted(folder_sizes_in_mb.items(), key=lambda x: x[1], reverse=True)[:n]
+
+            return top_folders
+        except Exception as e:
+            print(f"Error getting top {n} folders in container {container_name}: {e}")
+            raise e
+    
+    
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("Migration").getOrCreate()
     key_vault_scope = "key_vault_scope_migration"
@@ -77,6 +91,15 @@ if __name__ == "__main__":
     folder_sizes_in_mb = blob_folder_info.get_folders_size_in_mb(container_name)
     print("\nSizes of folders in MB:")
     for folder, size in folder_sizes_in_mb.items():
+        print(f"{folder}: {size:.2f} MB")
+
+    # Specify the number of top folders to retrieve
+    top_n = 5  # Example: top 5 folders
+
+    # Get the top 'n' folders by size
+    top_folders = blob_folder_info.get_top_n_folders_by_size(container_name, top_n)
+    print(f"Top {top_n} folders by size:")
+    for folder, size in top_folders:
         print(f"{folder}: {size:.2f} MB")
 
     spark.stop()
