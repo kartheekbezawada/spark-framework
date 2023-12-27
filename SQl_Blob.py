@@ -1,5 +1,5 @@
 import pyspark
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, Row
 from pyspark.sql.utils import AnalysisException
 import datetime
 import hashlib 
@@ -78,7 +78,7 @@ class DatabricksConnector:
             raise e
         return df
     
-    def get_table_name_from_blob_path(blob_path):
+    def get_table_name_from_blob_path(self,blob_path):
         table_name = blob_path.split('/')[-1]  # Split the path and take the last part
         return table_name
     
@@ -104,14 +104,19 @@ class DatabricksConnector:
     # Write table name,row count, blob path, current time to sql server
     def migration_log_info(self, table_name, blob_path):
         try:
-            current_time = datetime.now()
+            current_time = datetime.datetime.now()
             row_count = self.get_row_count(blob_path)
-            log_df = self.spark.createDataFrame([Row(
+
+        # Ensure that all fields in Row are compatible with SQL Server
+            log_df = self.spark.createDataFrame([
+                Row(
                 table_name=table_name,
                 row_count=row_count,
                 blob_path=blob_path,
-                timestamp=current_time
-            )])
+                timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S")  # Format timestamp
+            )
+            ])
+
             log_df.write \
                 .format("jdbc") \
                 .option("url", self._get_jdbc_url()) \
@@ -122,7 +127,7 @@ class DatabricksConnector:
                 .save()
         except Exception as e:
             print(f"Error writing to SQL Server log: {e}")
-            raise e
+        raise e
     
 
 if __name__ == "__main__":
