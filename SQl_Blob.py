@@ -82,6 +82,10 @@ class DatabricksConnector:
         table_name = blob_path.split('/')[-1]  # Split the path and take the last part
         return table_name
     
+    def get_row_count(self, blob_path):
+        df = self.read_from_blob_storage(blob_path)
+        return df.count()
+    
     # write to sql server by creating table, table not present in sql server
     def write_to_sql_server(self, df, table_name):
         try:
@@ -97,17 +101,38 @@ class DatabricksConnector:
             print(f"Error writing to SQL Server: {e}")
             raise e
     
+    # Write table name,row count, blob path, current time to sql server
+    def migration_log_info(self, table_name, blob_path):
+        try:
+            current_time = datetime.now()
+            row_count = self.get_row_count(blob_path)
+            log_df = self.spark.createDataFrame([Row(
+                table_name=table_name,
+                row_count=row_count,
+                blob_path=blob_path,
+                timestamp=current_time
+            )])
+            log_df.write \
+                .format("jdbc") \
+                .option("url", self._get_jdbc_url()) \
+                .option("dbtable", "Migration_Log_Table") \
+                .option("user", self.jdbc_username) \
+                .option("password", self.jdbc_password) \
+                .mode("append") \
+                .save()
+        except Exception as e:
+            print(f"Error writing to SQL Server log: {e}")
+            raise e
+    
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("DataMigration").getOrCreate()
     db_connector = DatabricksConnector(spark, "databricks-sql-blob-storage")
-    table_names = ["dbo.SalesLT.Customer", "dbo.SalesLT.Product", "dbo.SalesLT.Order"]
     db_connector.migrate_data(table_names)
     blob_path = f"{db_connector.blob_storage_url}/dbo_SalesLT_Customer"
     df = db_connector.read_from_blob_storage(blob_path)
-    if df is not None:
-        table_name = get_table_name_from_blob_path(blob_path)
-        db_connector.write_to_sql_server(df, table_name=table_name)
-    else:
-        print("DataFrame is None. Cannot write to SQL Server.")
+    table_name = get_table_name_from_blob_path(blob_path)
+    db_connector.write_to_sql_server(df, table_name=table_name)
+    db_connector.migration_log_info(table_name, blob_path)
+
     
