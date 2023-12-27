@@ -77,8 +77,12 @@ class DatabricksConnector:
             print(f"Error reading from blob storage: {e}")
             raise e
         return df
-    # write to sql server by creating table, table not present in sql server
     
+    def get_table_name_from_blob_path(blob_path):
+        table_name = blob_path.split('/')[-1]  # Split the path and take the last part
+        return table_name
+    
+    # write to sql server by creating table, table not present in sql server
     def write_to_sql_server(self, df, table_name):
         try:
             df.write \
@@ -101,10 +105,9 @@ if __name__ == "__main__":
     db_connector.migrate_data(table_names)
     blob_path = f"{db_connector.blob_storage_url}/dbo_SalesLT_Customer"
     df = db_connector.read_from_blob_storage(blob_path)
-    df.show()
-    df.printSchema()
-    df.count()
-    df.describe().show()
-    df.write_to_sql_server(df, table_name = f"{dbo}.blob_path")
-    spark.stop()
+    if df is not None:
+        table_name = get_table_name_from_blob_path(blob_path)
+        db_connector.write_to_sql_server(df, table_name=table_name)
+    else:
+        print("DataFrame is None. Cannot write to SQL Server.")
     
