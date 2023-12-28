@@ -103,3 +103,4 @@ if __name__ == "__main__":
         print(f"{folder}: {size:.2f} MB")
 
     spark.stop()
+    

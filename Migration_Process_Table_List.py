@@ -29,41 +29,8 @@ class DatabricksConnector:
 
     def _get_jdbc_url(self):
         return f"jdbc:sqlserver://{self.jdbc_hostname};database={self.jdbc_database}"
-
-    def connect_sql_server(self, table_name):
-        try:
-            df = self.spark.read \
-                .format("jdbc") \
-                .option("url", self._get_jdbc_url()) \
-                .option("dbtable", table_name) \
-                .option("user", self.jdbc_username) \
-                .option("password", self.jdbc_password) \
-                .load()
-        except AnalysisException as e:
-            print(f"Error connecting to SQL Server for table {table_name}: {e}")
-            raise e
-        return df
     
-    #write to blob storage maximun 1000 records per file
-    def write_to_blob_storage(self, df, blob_path):
-        try:
-            df.write \
-                .mode("append") \
-                .options(**self.blob_storage_config) \
-                .option("maxRecordsPerFile", 1000) \
-                .parquet(blob_path) 
-        except Exception as e:
-            print(f"Error writing to blob storage: {e}")
-            raise e            
-    
-    def migrate_data(self, table_names):
-        for table_name in table_names:
-            df = self.connect_sql_server(table_name)
-            blob_path = f"{self.blob_storage_url}/{table_name.replace('.', '_')}"
-            self.write_to_blob_storage(df, blob_path)
-            print(f"Data migrated for table: {table_name}") 
-    
-    #rad from blob storage where blob path is actual folder and recursive is true
+    #read from blob storage where blob path is actual folder and recursive is true
     def read_from_blob_storage(self, blob_path):
         try:
             df = self.spark.read \
@@ -128,16 +95,24 @@ class DatabricksConnector:
         except Exception as e:
             print(f"Error writing to SQL Server log: {e}")
         raise e
+    
+    def process_table(self, table_name):
+        blob_path = f"{self.blob_storage_url}/{table_name}"
+        df = self.read_from_blob_storage(blob_path)  # Store the result in df
+        if df is not None and not df.rdd.isEmpty():
+            self.write_to_sql_server(df, table_name=table_name)
+            self.migration_log_info(table_name, blob_path)
+        else:
+            print(f"No data found in blob path: {blob_path}")
 
+    def process_all_tables(self, table_names):
+        for table_name in table_names:
+            self.process_table(table_name)
 
 if __name__ == "__main__":
-    spark = SparkSession.builder.appName("DataMigration").getOrCreate()
-    db_connector = DatabricksConnector(spark, "databricks-sql-blob-storage")
-    db_connector.migrate_data(table_names)
-    blob_path = f"{db_connector.blob_storage_url}/dbo_SalesLT_Customer"
-    df = db_connector.read_from_blob_storage(blob_path)
-    table_name = get_table_name_from_blob_path(blob_path)
-    db_connector.write_to_sql_server(df, table_name=table_name)
-    db_connector.migration_log_info(table_name, blob_path)
-
+    spark = SparkSession.builder.appName("Migration").getOrCreate()
+    key_vault_scope = "key_vault_scope_migration"
+    table_names = ["dbo.Customer", "dbo.Product", "dbo.SalesOrderDetail", "dbo.SalesOrderHeader"]
+    databricks_connector = DatabricksConnector(spark, key_vault_scope)
+    databricks_connector.process_all_tables(table_names)
     
