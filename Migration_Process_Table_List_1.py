@@ -159,32 +159,40 @@ class DatabricksConnector:
             print(f"Error getting top {n} folders in container {container_name}: {e}")
             raise e
     
-    def delete_folder_from_blob_storage(self, folder_path):
+    def delete_directory_from_blob_storage(self, directory_path):
         try:
-            blob_service_client = BlobServiceClient(account_url=self.alpha_storage_url_https, credential=self.alpha_account_key)
-            container_client = blob_service_client.get_container_client(self.alpha_container_name)
-            
-            # Listing all blobs in the folder and deleting them
-            blobs = container_client.list_blobs(name_starts_with=folder_path)
-            for blob in blobs:
-                blob_client = container_client.get_blob_client(blob)
-                blob_client.delete_blob()
-            
-            print(f"Deleted folder: {folder_path} from blob storage")
+            # Initialize the Data Lake Service Client
+            service_client = DataLakeServiceClient(account_url=self.alpha_storage_url, credential=self.alpha_account_key)
+
+            # Get a client for the file system and then for the directory
+            file_system_client = service_client.get_file_system_client(file_system=self.alpha_container_name)
+            directory_client = file_system_client.get_directory_client(directory_path)
+
+            # Delete the directory
+            directory_client.delete_directory()
+
+            print(f"Deleted directory: {directory_path} from Azure Data Lake Storage Gen2")
         except Exception as e:
-            print(f"Error deleting folder from blob storage: {e}")
+            print(f"Error deleting directory from Azure Data Lake Storage Gen2: {e}")
             raise e
     
     def process_table(self, table_name):
         blob_path = f"{self.alpha_storage_url}/{table_name}"
-        df = self.read_from_blob_storage(blob_path)
-        if df is not None and not df.rdd.isEmpty():
-            self.write_to_sql_server(df, table_name=table_name)
-            self.migration_log_info(table_name, blob_path)
-            # Delete the folder after successful migration
-            self.delete_folder_from_blob_storage(table_name)
-        else:
-            print(f"No data found in blob path: {blob_path}")
+        directory_path = table_name  # Assuming table_name corresponds to the directory name in ADLS Gen2
+
+        try:
+            df = self.read_from_blob_storage(blob_path)
+            if df is not None and not df.rdd.isEmpty():
+                self.write_to_sql_server(df, table_name=table_name)
+                self.migration_log_info(table_name, blob_path)
+                
+                # Delete the directory after successful migration
+                self.delete_directory_from_blob_storage(directory_path)
+                print(f"Successfully processed and deleted directory: {directory_path}")
+            else:
+                print(f"No data found in blob path: {blob_path}")
+        except Exception as e:
+            print(f"Error processing table {table_name}: {e}")
     
     # Process all tables that come from get_all_folders
     def process_all_tables(self, table_names):
