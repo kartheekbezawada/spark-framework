@@ -11,25 +11,29 @@ class DatabricksConnector:
     def __init__(self, spark, key_vault_scope):
         self.spark = spark
         self.key_vault_scope = "key_vault_scope_migration"
+        
+        # SQL Server credentials
         self.jdbc_hostname = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-server-hostname")
         self.jdbc_database = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-database-name")
         self.jdbc_username = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-username")
         self.jdbc_password = dbutils.secrets.get(scope=self.key_vault_scope, key="sql-password")
-        self.blob_account_name = dbutils.secrets.get(scope=self.key_vault_scope, key="blob-storage-account-name")
-        self.blob_account_key = dbutils.secrets.get(scope=self.key_vault_scope, key="blob-storage-account-key")
-        self.blob_container_name = dbutils.secrets.get(scope=self.key_vault_scope, key="blob-container-name")
-        self.blob_storage_url = self._get_blob_storage_url()
-        self.blob_storage_url_https = self.get_blob_storage_url_https()
-        self.blob_storage_config = self._get_blob_storage_config()
+        
+        # Azure Data Lake Storage Gen2 credentials for alpha
+        self.alpha_account_name = dbutils.secrets.get(scope=self.key_vault_scope, key="blob-storage-account-name")
+        self.alpha_account_key = dbutils.secrets.get(scope=self.key_vault_scope, key="blob-storage-account-key")
+        self.alpha_container_name = dbutils.secrets.get(scope=self.key_vault_scope, key="blob-container-name")
+        self.alpha_storage_url = self._get_blob_storage_url()
+        self.alpha_storage_url_https = self.get_blob_storage_url_https()
+        self.alpha_storage_config = self._get_blob_storage_config()
 
     def _get_blob_storage_url(self):
-        return f"wasbs://{self.blob_container_name}@{self.blob_account_name}.blob.core.windows.net"
+        return f"wasbs://{self.alpha_container_name}@{self.alpha_account_name}.blob.core.windows.net"
 
     def get_blob_storage_url_https(self):
-        return f"https://{self.blob_account_name}.blob.core.windows.net"
+        return f"https://{self.alpha_account_name}.blob.core.windows.net"
 
     def _get_blob_storage_config(self):
-        return {f"fs.azure.account.key.{self.blob_account_name}.blob.core.windows.net": self.blob_account_key}
+        return {f"fs.azure.account.key.{self.alpha_account_name}.blob.core.windows.net": self.alpha_account_key}
 
     def _get_jdbc_url(self):
         return f"jdbc:sqlserver://{self.jdbc_hostname};database={self.jdbc_database}"
@@ -39,7 +43,7 @@ class DatabricksConnector:
         try:
             df = self.spark.read \
                 .format("parquet") \
-                .options(**self.blob_storage_config) \
+                .options(**self.alpha_storage_config) \
                 .option("recursiveFileLookup", "true") \
                 .option("inferSchema", "true") \
                 .option("header", "true") \
@@ -83,7 +87,6 @@ class DatabricksConnector:
                 Row(
                 table_name=table_name,
                 row_count=row_count,
-                blob_path=blob_path,
                 timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S")  # Format timestamp
             )
             ])
@@ -99,19 +102,10 @@ class DatabricksConnector:
         except Exception as e:
             print(f"Error writing to SQL Server log: {e}")
         raise e
-    
-    def process_table(self, table_name):
-        blob_path = f"{self.blob_storage_url}/{table_name}"
-        df = self.read_from_blob_storage(blob_path)  # Store the result in df
-        if df is not None and not df.rdd.isEmpty():
-            self.write_to_sql_server(df, table_name=table_name)
-            self.migration_log_info(table_name, blob_path)
-        else:
-            print(f"No data found in blob path: {blob_path}")
 
     def get_all_folders(self, container_name):
         try:
-            blob_service_client = BlobServiceClient(account_url=self.blob_storage_url_https, credential=self.blob_account_key)
+            blob_service_client = BlobServiceClient(account_url=self.alpha_storage_url_https, credential=self.alpha_account_key)
             container_client = blob_service_client.get_container_client(container_name)
             blob_list = container_client.list_blobs()
 
@@ -128,6 +122,70 @@ class DatabricksConnector:
             print(f"Error getting all folders in container {container_name}: {e}")
             raise e
         
+    def get_folders_size_in_mb(self, container_name):
+        try:
+            blob_service_client = BlobServiceClient(account_url=self.alpha_storage_url, credential=self.alpha_account_key)
+            container_client = blob_service_client.get_container_client(container_name)
+            blob_list = container_client.list_blobs()
+
+            # Dictionary to store folder sizes
+            folder_sizes = {}
+            for blob in blob_list:
+                # Extract directory names
+                directory_path = '/'.join(blob.name.split('/')[:-1])
+                if directory_path:
+                    # Accumulate sizes for each folder
+                    folder_sizes[directory_path] = folder_sizes.get(directory_path, 0) + blob.size
+
+            # Convert sizes to MB
+            for folder in folder_sizes:
+                folder_sizes[folder] = folder_sizes[folder] / (1024 * 1024)  # Convert from bytes to MB
+
+            return folder_sizes
+        except Exception as e:
+            print(f"Error getting sizes of folders in container {container_name}: {e}")
+            raise e
+    
+    def get_top_n_folders_by_size(self, container_name, n):
+        try:
+            # Get folder sizes in MB
+            folder_sizes_in_mb = self.get_folders_size_in_mb(container_name)
+
+            # Sort the folders by size and get the top 'n'
+            top_folders = sorted(folder_sizes_in_mb.items(), key=lambda x: x[1], reverse=True)[:n]
+            top_folders2 = [items[0] for items in top_folders]
+            return top_folders2
+        except Exception as e:
+            print(f"Error getting top {n} folders in container {container_name}: {e}")
+            raise e
+    
+    def delete_folder_from_blob_storage(self, folder_path):
+        try:
+            blob_service_client = BlobServiceClient(account_url=self.alpha_storage_url_https, credential=self.alpha_account_key)
+            container_client = blob_service_client.get_container_client(self.alpha_container_name)
+            
+            # Listing all blobs in the folder and deleting them
+            blobs = container_client.list_blobs(name_starts_with=folder_path)
+            for blob in blobs:
+                blob_client = container_client.get_blob_client(blob)
+                blob_client.delete_blob()
+            
+            print(f"Deleted folder: {folder_path} from blob storage")
+        except Exception as e:
+            print(f"Error deleting folder from blob storage: {e}")
+            raise e
+    
+    def process_table(self, table_name):
+        blob_path = f"{self.alpha_storage_url}/{table_name}"
+        df = self.read_from_blob_storage(blob_path)
+        if df is not None and not df.rdd.isEmpty():
+            self.write_to_sql_server(df, table_name=table_name)
+            self.migration_log_info(table_name, blob_path)
+            # Delete the folder after successful migration
+            self.delete_folder_from_blob_storage(table_name)
+        else:
+            print(f"No data found in blob path: {blob_path}")
+    
     # Process all tables that come from get_all_folders
     def process_all_tables(self, table_names):
         for table_name in table_names:
@@ -139,7 +197,9 @@ if __name__ == "__main__":
     key_vault_scope = "key_vault_scope_migration"
     databricks_connector = DatabricksConnector(spark, key_vault_scope)
     container_name = "data"
-    table_names = databricks_connector.get_all_folders(container_name)
+    n = 2
+    top_fodlers2 = databricks_connector.get_top_n_folders_by_size(container_name, n)
+    table_names = topfolders2
     databricks_connector.process_all_tables(table_names)
     
     
