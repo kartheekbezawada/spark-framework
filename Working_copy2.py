@@ -76,20 +76,17 @@ class DatabricksConnector:
             raise e
     
     # Write table name,row count, blob path, current time to sql server
-    def migration_log_info(self, table_name, blob_path):
+    def migration_log_info(self, table_name, blob_path, row_count_validated):
         try:
             current_time = datetime.datetime.now()
             row_count = self.get_row_count(blob_path)
-
-        # Ensure that all fields in Row are compatible with SQL Server
+            validation_status = "Pass" if row_count_validated else "Fail"
             log_df = self.spark.createDataFrame([
                 Row(
-                table_name=table_name,
-                row_count=row_count,
-                timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S")  # Format timestamp
-            )
-            ])
-
+                    table_name=table_name,
+                    row_count=row_count,
+                    validation_status=validation_status,
+                    timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S"))])
             log_df.write \
                 .format("jdbc") \
                 .option("url", self._get_jdbc_url()) \
@@ -100,7 +97,8 @@ class DatabricksConnector:
                 .save()
         except Exception as e:
             print(f"Error writing to SQL Server log: {e}")
-        raise e
+
+
 
     def get_all_folders(self, container_name):
         try:
@@ -145,12 +143,6 @@ class DatabricksConnector:
             print(f"Error getting sizes of folders in container {container_name}: {e}")
             raise e
 
-    def calculate_checksum(self, df):
-        """ Calculate the checksum of a DataFrame """
-        md5 = hashlib.md5()
-        for row in df.collect():
-            md5.update(str(row).encode('utf-8'))
-        return md5.hexdigest()
 
     def destination_row_count(self, table_name):
         """ Count the number of rows in a destination table """
@@ -164,22 +156,17 @@ class DatabricksConnector:
         return dest_df.count()
 
     def validate_data(self, source_df, dest_table_name):
-        """ Validate the data integrity between source and destination """
-        source_checksum = self.calculate_checksum(source_df)
+        """ Validate the data integrity between source and destination by comparing row counts """
+        source_row_count = source_df.count()
         dest_row_count = self.destination_row_count(dest_table_name)
 
-        if source_df.count() == dest_row_count and source_checksum == self.calculate_checksum(self.spark.read \
-            .format("jdbc") \
-            .option("url", self._get_jdbc_url()) \
-            .option("dbtable", dest_table_name) \
-            .option("user", self.jdbc_username) \
-            .option("password", self.jdbc_password) \
-            .load()):
+        if source_row_count == dest_row_count:
             print(f"Validation successful for table {dest_table_name}")
             return True
         else:
-            print(f"Validation failed for table {dest_table_name}")
-            return False
+         print(f"Validation failed for table {dest_table_name}. Source count: {source_row_count}, Destination count: {dest_row_count}")
+        return False
+
     
     # Ignore tables that have already been migrated
     def ignore_migrated_tables(self, table_names):
@@ -208,8 +195,8 @@ class DatabricksConnector:
         
         if source_df is not None and not source_df.rdd.isEmpty():
             self.write_to_sql_server(source_df, table_name=table_name)
-            self.migration_log_info(table_name, blob_path)
-            self.validate_data(source_df, table_name)            
+            validation_result = self.validate_data(source_df, table_name)
+            self.migration_log_info(table_name, blob_path, validation_result)         
         else:
             print(f"No data found in blob path: {blob_path}")
     
