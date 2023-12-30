@@ -224,9 +224,11 @@ class DatabricksConnector:
     def batch_process_all_tables(self, container_name, batch_size):
         all_folders = self.get_all_folders(container_name)
         ignore_migrated_folders = self.ignore_migrated_tables(all_folders)
-        final_folders = [folder for folder in all_folders if folder in ignore_migrated_folders]
+
+        # Get folder sizes and sort the non-migrated folders
         folder_sizes = self.get_folders_size_in_mb(container_name)
-        sorted_folders = sorted(all_folders, key=lambda x: folder_sizes.get(x, 0), reverse=True)
+        sorted_folders = sorted(ignore_migrated_folders, key=lambda x: folder_sizes.get(x, 0), reverse=True)
+
         for i in range(0, len(sorted_folders), batch_size):
             batch_folders = sorted_folders[i:i + batch_size]
             print(f"Processing batch: {batch_folders}")
