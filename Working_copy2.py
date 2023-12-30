@@ -191,14 +191,15 @@ class DatabricksConnector:
                 .option("user", self.jdbc_username) \
                 .option("password", self.jdbc_password) \
                 .load() \
-                .select("table_name") \
+                .select("Migrated_Table_Name") \
                 .distinct() \
                 .collect()
-            migrated_tables = [row.table_name for row in migrated_tables]
+            migrated_tables = [row.Migrated_Table_Name for row in migrated_tables]
             return [table_name for table_name in table_names if table_name not in migrated_tables]
         except AnalysisException as e:
             print(f"Error ignoring migrated tables: {e}")
             return table_names
+
     
     # Process a single table
     def process_table(self, table_name):
