@@ -1,10 +1,9 @@
 import pyspark
 from pyspark.sql import SparkSession, Row
 from pyspark.sql.utils import AnalysisException
+from azure.storage.blob import BlobServiceClient
 import datetime
 import hashlib 
-import os
-import random
 import dbutils
 
 class DatabricksConnector:
@@ -77,20 +76,17 @@ class DatabricksConnector:
             raise e
     
     # Write table name,row count, blob path, current time to sql server
-    def migration_log_info(self, table_name, blob_path):
+    def migration_log_info(self, table_name, blob_path, row_count_validated):
         try:
             current_time = datetime.datetime.now()
             row_count = self.get_row_count(blob_path)
-
-        # Ensure that all fields in Row are compatible with SQL Server
+            validation_status = "Pass" if row_count_validated else "Fail"
             log_df = self.spark.createDataFrame([
                 Row(
-                table_name=table_name,
-                row_count=row_count,
-                timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S")  # Format timestamp
-            )
-            ])
-
+                    table_name=table_name,
+                    row_count=row_count,
+                    validation_status=validation_status,
+                    timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S"))])
             log_df.write \
                 .format("jdbc") \
                 .option("url", self._get_jdbc_url()) \
@@ -101,7 +97,8 @@ class DatabricksConnector:
                 .save()
         except Exception as e:
             print(f"Error writing to SQL Server log: {e}")
-        raise e
+
+
 
     def get_all_folders(self, container_name):
         try:
@@ -145,73 +142,86 @@ class DatabricksConnector:
         except Exception as e:
             print(f"Error getting sizes of folders in container {container_name}: {e}")
             raise e
+
+
+    def destination_row_count(self, table_name):
+        """ Count the number of rows in a destination table """
+        dest_df = self.spark.read \
+            .format("jdbc") \
+            .option("url", self._get_jdbc_url()) \
+            .option("dbtable", table_name) \
+            .option("user", self.jdbc_username) \
+            .option("password", self.jdbc_password) \
+            .load()
+        return dest_df.count()
+
+    def validate_data(self, source_df, dest_table_name):
+        """ Validate the data integrity between source and destination by comparing row counts """
+        source_row_count = source_df.count()
+        dest_row_count = self.destination_row_count(dest_table_name)
+
+        if source_row_count == dest_row_count:
+            print(f"Validation successful for table {dest_table_name}")
+            return True
+        else:
+         print(f"Validation failed for table {dest_table_name}. Source count: {source_row_count}, Destination count: {dest_row_count}")
+        return False
+
     
-    def get_top_n_folders_by_size(self, container_name, num_folders):
+    # Ignore tables that have already been migrated
+    def ignore_migrated_tables(self, table_names):
         try:
-            # Get folder sizes in MB
-            folder_sizes_in_mb = self.get_folders_size_in_mb(container_name)
+            migrated_tables = self.spark.read \
+                .format("jdbc") \
+                .option("url", self._get_jdbc_url()) \
+                .option("dbtable", "Migration_Log_Table") \
+                .option("user", self.jdbc_username) \
+                .option("password", self.jdbc_password) \
+                .load() \
+                .select("Migrated_Table_Name") \
+                .distinct() \
+                .collect()
+            migrated_tables = [row.Migrated_Table_Name for row in migrated_tables]
+            return [table_name for table_name in table_names if table_name not in migrated_tables]
+        except AnalysisException as e:
+            print(f"Error ignoring migrated tables: {e}")
+            return table_names
 
-            # Sort the folders by size and get the top 'n'
-            top_folders = sorted(folder_sizes_in_mb.items(), key=lambda x: x[1], reverse=True)[:num_folders]
-            top_folders_key = [items[0] for items in top_folders]
-            return top_folders_key
-        except Exception as e:
-            print(f"Error getting top {n} folders in container {container_name}: {e}")
-            raise e
     
-    def delete_directory_from_blob_storage(self, directory_path):
-        try:
-            # Initialize the Data Lake Service Client
-            service_client = DataLakeServiceClient(account_url=self.alpha_storage_url, credential=self.alpha_account_key)
-
-            # Get a client for the file system and then for the directory
-            file_system_client = service_client.get_file_system_client(file_system=self.alpha_container_name)
-            directory_client = file_system_client.get_directory_client(directory_path)
-
-            # Delete the directory
-            directory_client.delete_directory()
-
-            print(f"Deleted directory: {directory_path} from Azure Data Lake Storage Gen2")
-        except Exception as e:
-            print(f"Error deleting directory from Azure Data Lake Storage Gen2: {e}")
-            raise e
-    
+    # Process a single table
     def process_table(self, table_name):
         blob_path = f"{self.alpha_storage_url}/{table_name}"
-        directory_path = table_name  # Assuming table_name corresponds to the directory name in ADLS Gen2
-
-        try:
-            df = self.read_from_blob_storage(blob_path)
-            if df is not None and not df.rdd.isEmpty():
-                self.write_to_sql_server(df, table_name=table_name)
-                self.migration_log_info(table_name, blob_path)
-                
-                # Delete the directory after successful migration
-                self.delete_directory_from_blob_storage(directory_path)
-                print(f"Successfully processed and deleted directory: {directory_path}")
-            else:
-                print(f"No data found in blob path: {blob_path}")
-        except Exception as e:
-            print(f"Error processing table {table_name}: {e}")
+        source_df = self.read_from_blob_storage(blob_path)
+        
+        if source_df is not None and not source_df.rdd.isEmpty():
+            self.write_to_sql_server(source_df, table_name=table_name)
+            validation_result = self.validate_data(source_df, table_name)
+            self.migration_log_info(table_name, blob_path, validation_result)         
+        else:
+            print(f"No data found in blob path: {blob_path}")
     
-    # Process all tables that come from get_all_folders
+    # Process all tables in the list of table names except those that have already been migrated
     def process_all_tables(self, table_names):
+        table_names = self.ignore_migrated_tables(table_names)
         for table_name in table_names:
             self.process_table(table_name)
             print(f"Data migrated for table: {table_name}")
             
-   
-    #This code will loop back agian and again until the data is migrated from blob storage
+    # Batch process all tables in the list of table names except those that have already been migrated
     def batch_process_all_tables(self, container_name, batch_size):
-    # Get the sorted list of folders by size
-        sorted_folders = self.get_top_n_folders_by_size(container_name, batch_size)
-    # Process folders in batches
+        all_folders = self.get_all_folders(container_name)
+        ignore_migrated_folders = self.ignore_migrated_tables(all_folders)
+
+        # Get folder sizes and sort the non-migrated folders
+        folder_sizes = self.get_folders_size_in_mb(container_name)
+        sorted_folders = sorted(ignore_migrated_folders, key=lambda x: folder_sizes.get(x, 0), reverse=True)
+
         for i in range(0, len(sorted_folders), batch_size):
             batch_folders = sorted_folders[i:i + batch_size]
             print(f"Processing batch: {batch_folders}")
             self.process_all_tables(batch_folders)
             print(f"Data migration completed for batch: {batch_folders}")
-
+        
 
 if __name__ == "__main__":
     # Define the flags
