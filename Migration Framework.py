@@ -74,6 +74,22 @@ class DatabricksConnector:
         except Exception as e:
             print(f"Error writing to SQL Server: {e}")
             raise e
+        
+    # Write to sql server by using SQL - Spark Connector
+    def write_to_sql_server_2(self, df, table_name):
+        try:
+            df.write \
+                .format("com.microsoft.sqlserver.jdbc.spark") \
+                .option("url", self._get_jdbc_url()) \
+                .option("dbtable", table_name) \
+                .option("user", self.jdbc_username) \
+                .option("password", self.jdbc_password) \
+                .mode("append") \
+                .save()
+        except Exception as e:
+            print(f"Error writing to SQL Server: {e}")
+            raise e
+        
     
     # Write table name,row count, blob path, current time to sql server
     def migration_log_info(self, table_name, blob_path, row_count_validated):
@@ -159,7 +175,6 @@ class DatabricksConnector:
         """ Validate the data integrity between source and destination by comparing row counts """
         source_row_count = source_df.count()
         dest_row_count = self.destination_row_count(dest_table_name)
-
         if source_row_count == dest_row_count:
             print(f"Validation successful for table {dest_table_name}")
             return True
