@@ -56,9 +56,45 @@ class DatabricksConnector:
         metrics["status"] = "Fail"
         metrics["error_message"] = str(error_message)
     
+    def log_read_metrics(self, table_name, blob_path, read_metrics):
+        read_duration = (read_metrics["end_time"] - read_metrics["start_time"]).total_seconds() if read_metrics["end_time"] else None
+        log_entry = {
+            "table_name": table_name,
+            "blob_path": blob_path,
+            "operation": "Read",
+            "duration": read_duration,
+            "status": read_metrics["status"],
+            "error_message": read_metrics["error_message"]
+        }
+        self._log_metrics(log_entry)
+
+    def log_write_metrics(self, table_name, write_metrics):
+        write_duration = (write_metrics["end_time"] - write_metrics["start_time"]).total_seconds() if write_metrics["end_time"] else None
+        log_entry = {
+            "table_name": table_name,
+            "operation": "Write",
+            "duration": write_duration,
+            "status": write_metrics["status"],
+            "error_message": write_metrics["error_message"]
+        }
+        self._log_metrics(log_entry)
+
+    def _log_metrics(self, log_entry):
+        try:
+            log_df = self.spark.createDataFrame([Row(**log_entry)])
+            log_df.write \
+                .format("jdbc") \
+                .option("url", self._get_jdbc_url()) \
+                .option("dbtable", "Migration_Log_Table") \
+                .option("user", self.jdbc_username) \
+                .option("password", self.jdbc_password) \
+                .mode("append") \
+                .save()
+        except Exception as e:
+            print(f"Error logging metrics to SQL Server: {e}")
     
     #read from blob storage where blob path is actual folder and recursive is true
-    def read_from_blob_storage(self, blob_path): 
+    def read_from_blob_storage(self, blob_path,table_name): 
         read_metrics = self.start_metrics_collection()
         try:
             df = self.spark.read \
@@ -79,7 +115,7 @@ class DatabricksConnector:
 
     
     # write to sql server by creating table, table not present in sql server
-    def write_to_sql_server(self, df, table_name):
+    def write_to_sql_server(self, df, table_name,blob_path):
         write_metrics = self.start_metrics_collection()
         try:
             write_metrics["Write_Start_Time"] = datetime.datetime.now()
