@@ -39,21 +39,30 @@ class DatabricksConnector:
     
     #read from blob storage where blob path is actual folder and recursive is true
     def read_from_blob_storage(self, blob_path):
-        read_start_time = datetime.datetime.now()  # Start time
-    try:
-        df = self.spark.read \
-            .format("parquet") \
-            .options(**self.alpha_storage_config) \
-            .option("recursiveFileLookup", "true") \
-            .option("inferSchema", "true") \
-            .option("header", "true") \
-            .load(blob_path)
-    except Exception as e:
-        print(f"Error reading from blob storage: {e}")
-        raise e
-    read_end_time = datetime.datetime.now()  # End time
-    read_duration = (read_end_time - read_start_time).total_seconds() / 60  # Duration in minutes
-    return df, read_start_time, read_end_time, read_duration
+        try:
+            folder_contents = self.spark.read \
+                .format("parquet") \
+                .options(**self.alpha_storage_config) \
+                .option("recursiveFileLookup", "true") \
+                .option("inferSchema", "true") \
+                .load(blob_path) \
+                .take(1)
+
+            if not folder_contents:
+                print(f"Folder is empty: {blob_path}")
+                return None, True
+
+            df = self.spark.read \
+                .format("parquet") \
+                .options(**self.alpha_storage_config) \
+                .option("recursiveFileLookup", "true") \
+                .option("inferSchema", "true") \
+                .option("header", "true") \
+                .load(blob_path)
+            return df, False
+        except Exception as e:
+            print(f"Error reading from blob storage: {e}")
+            return None, False
 
     
     def get_table_name_from_blob_path(self,blob_path):
@@ -96,20 +105,19 @@ class DatabricksConnector:
         
     
     # Write table name,row count, blob path, current time to sql server
-    def migration_log_info(self, table_name, blob_path, row_count_validated, read_start_time, read_end_time, read_duration):
+    def migration_log_info(self, table_name, blob_path, row_count_validated, is_folder_empty=False):
         try:
             current_time = datetime.datetime.now()
-            row_count = self.get_row_count(blob_path)
-            validation_status = "Pass" if row_count_validated else "Fail"
+            validation_status = "Folder Empty, No Table Created" if is_folder_empty else ("Pass" if row_count_validated else "Fail")
+            row_count = 0 if is_folder_empty else self.get_row_count(blob_path)
+
             log_df = self.spark.createDataFrame([
                 Row(
                     table_name=table_name,
                     row_count=row_count,
                     validation_status=validation_status,
-                    read_start_time=read_start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    read_end_time=read_end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    read_duration=read_duration,
                     timestamp=current_time.strftime("%Y-%m-%d %H:%M:%S"))])
+
             log_df.write \
                 .format("jdbc") \
                 .option("url", self._get_jdbc_url()) \
@@ -214,14 +222,18 @@ class DatabricksConnector:
     # Process a single table
     def process_table(self, table_name):
         blob_path = f"{self.alpha_storage_url}/{table_name}"
-        source_df, read_start_time, read_end_time, read_duration = self.read_from_blob_storage(blob_path)
-    
-        if source_df is not None and not source_df.rdd.isEmpty():
+        source_df, is_folder_empty = self.read_from_blob_storage(blob_path)
+
+        if is_folder_empty:
+            self.migration_log_info(table_name, blob_path, False, is_folder_empty)
+            print(f"Skipping empty folder: {blob_path}")
+        elif source_df is not None:
             self.write_to_sql_server(source_df, table_name)
             validation_result = self.validate_data(source_df, table_name)
-            self.migration_log_info(table_name, blob_path, validation_result, read_start_time, read_end_time, read_duration)         
+            self.migration_log_info(table_name, blob_path, validation_result)
+            print(f"Data migrated for table: {table_name}")
         else:
-            print(f"No data found in blob path: {blob_path}")
+            print(f"Failed to read data from blob path: {blob_path}")
 
     
     # Process all tables in the list of table names except those that have already been migrated
