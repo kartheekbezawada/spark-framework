@@ -109,7 +109,13 @@ class DatabricksConnector:
         try:
             current_time = datetime.datetime.now()
             validation_status = "Folder Empty, No Table Created" if is_folder_empty else ("Pass" if row_count_validated else "Fail")
-            row_count = 0 if is_folder_empty else self.get_row_count(blob_path)
+
+            # Call get_row_count only when the folder is not empty
+            if is_folder_empty:
+                row_count = 0
+            else:
+                df, _ = self.read_from_blob_storage(blob_path)  # Ensure we're getting a DataFrame here
+                row_count = df.count() if df is not None else 0
 
             log_df = self.spark.createDataFrame([
                 Row(
@@ -128,6 +134,19 @@ class DatabricksConnector:
                 .save()
         except Exception as e:
             print(f"Error writing to SQL Server log: {e}")
+            """
+            The underscore _ in the line df, _ = self.read_from_blob_storage(blob_path) is a convention used in Python to indicate that the 
+            second value returned by the function call is intentionally being ignored or discarded. 
+            In your read_from_blob_storage method, the function returns two values: a DataFrame and a boolean flag 
+            indicating whether the folder is empty.
+            When you are calling this method within migration_log_info, 
+            you are only interested in the DataFrame (the first value) and not in the boolean flag (the second value). 
+            By using _, you are effectively capturing the second value (the flag) but indicating that it will not be used in the subsequent code.
+            This is a common practice in Python to make the code more readable and to signify that certain returned values are not needed.
+            So, in this context, df, _ = self.read_from_blob_storage(blob_path) means "Call read_from_blob_storage with blob_path, 
+            store the first returned item (DataFrame) in df, and ignore the second returned item (the boolean flag)."
+            """
+
 
 
 
