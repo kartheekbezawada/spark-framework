@@ -37,6 +37,11 @@ class DatabricksConnector:
     def _get_jdbc_url(self):
         return f"jdbc:sqlserver://{self.jdbc_hostname};database={self.jdbc_database}"
     
+    # Decide the number of partitions for a given dataframe based on the number of files, file size and number of executors
+    def num_partitions(self, df, file_size_mb, num_executors):
+        num_files = df.rdd.getNumPartitions()
+        return num_files * file_size_mb // num_executors
+    
     #read from blob storage where blob path is actual folder and recursive is true
     def read_from_blob_storage(self, blob_path):
         try:
@@ -194,7 +199,20 @@ class DatabricksConnector:
             print(f"Error getting sizes of folders in container {container_name}: {e}")
             raise e
 
-
+    # Print Folder, Folder Size in GB and Row Count
+    def print_folder_sizes(self, container_name):
+        folder_sizes = self.get_folders_size_in_mb(container_name)
+        for folder in folder_sizes:
+            print(f"Folder: {folder}, Size (MB): {folder_sizes[folder]}, Row Count: {self.get_row_count(folder)}")
+     
+    # Print Print Folder, Folder Size in GB and Row Count, folders sortted by size in ascending order
+    def print_folder_sizes_sorted(self, container_name):
+        folder_sizes = self.get_folders_size_in_mb(container_name)
+        sorted_folders = sorted(folder_sizes, key=folder_sizes.get)
+        for folder in sorted_folders:
+            print(f"Folder: {folder}, Size (MB): {folder_sizes[folder]}, Row Count: {self.get_row_count(folder)}")
+        
+    
     def destination_row_count(self, table_name):
         """ Count the number of rows in a destination table """
         dest_df = self.spark.read \
