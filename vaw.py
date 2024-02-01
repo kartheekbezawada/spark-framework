@@ -138,7 +138,9 @@ class PayrollDataProcessor:
                 
         
 if __name__ == "__main__":
-    spark = SparkSession.builder.appName("VAW").getOrCreate()
+    spark = SparkSession.builder.appName("VAW") \
+                        .config("fs.azure.account.key." + apha_account_name + ".blob.core.windows.net", apha_account_key) \
+                        .getOrCreate()
     processor = PayrollDataProcessor(spark)
 
     # Reading data from Delta Lake tables
