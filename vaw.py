@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, row_number, current_date, date_sub
+from pyspark.sql.functions import col, row_number, current_date, date_sub, substring, when
 from pyspark.sql.window import Window
 
 class PayrollDataProcessor:
@@ -35,14 +35,21 @@ class PayrollDataProcessor:
         return self.prefix_columns(processed_df, "cbr")
 
     def process_colleague_worked_hours(self, df):
-        processed_df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path") \
-                         .withColumn("datekey", col("work_start_time").cast("date")) \
+        processed_df = (df.drop("md_process_id", "md_source_ts", "md_created_ts", "md_source_path")
                          .filter(col("datekey") == date_sub(current_date(), 4))
+                         .withColumn("datekey", col("work_start_time").cast("date"))
+                         .withColumn("store_number", substring(col("dock_name"), 1, 4))
+                         .withColumn("division_number", substring(col("dock_name"), 5, 8))
+                        )
         return self.prefix_columns(processed_df, "cwh")
 
     def process_wd_wb_mapping(self, df):
         processed_df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
         return self.prefix_columns(processed_df, "wdwbmap")
+
+    def process_div_cc_hierarchy(self, df):
+        processed_df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
+        return self.prefix_columns(processed_df, "dcch")
 
     def join_df(self, process_colleague_worked_hours, process_wd_wb_mapping, process_colleague_rates, process_colleague_base_rate):
         joined_df = process_colleague_worked_hours.join(process_wd_wb_mapping,
