@@ -122,6 +122,21 @@ class PayrollDataProcessor:
         transformed_df = self.apply_case_statement(df_with_columns)
         return transformed_df
 
+    def write_delta_table(self, df, path):
+        # Extract year and month from the date column for partitioning
+        df = df.withColumn("year", year(col("date"))) \
+               .withColumn("month", month(col("date")))
+
+        # Define the path for the Delta table
+        delta_path = f"{self.apha_storage_url}/{path}"
+
+        # Write the DataFrame as a Delta table
+        df.write.format("delta") \
+                .mode("append") \
+                .partitionBy("year", "month") \
+                .save(delta_path)
+                
+        
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("VAW").getOrCreate()
     processor = PayrollDataProcessor(spark)
@@ -141,3 +156,4 @@ if __name__ == "__main__":
     joined_df = processor.join_df(pcwhrs, pwdwbm, pcr, pcbr)
     transformed_df = processor.transform_df(joined_df)
     transformed_df.show()
+    processor.write_delta_table(transformed_df, "path/to/delta_table")
