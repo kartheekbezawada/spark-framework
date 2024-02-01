@@ -86,14 +86,27 @@ class PayrollDataProcessor:
         )
 
     def apply_case_statement(self, df):
-        # Apply the case statement logic
+        # Apply the case statement logic with multiple conditions
         return df.withColumn(
             "calculated_wages",
-            when((col("wdwbmap_paycode") == "R010") & (col("wdwbmap_double_flag").isNull()),
-                 col("cbr_basic_hourly_rate").cast("decimal(6,2)") * 
-                 col("cwh_wrks_hrs").cast("decimal(6,2)") * 
-                 col("cwh_htype_multiple").cast("decimal(6,2)"))
-            .otherwise(None)
+            when(
+                (col("wdwbmap_paycode") == "R010") & (col("wdwbmap_double_flag").isNull()),
+                col("cbr_basic_hourly_rate").cast("decimal(6,2)") * 
+                col("cwh_wrks_hrs").cast("decimal(6,2)") * 
+                col("cwh_htype_multiple").cast("decimal(6,2)")
+            ).when(
+                (col("wdwbmap_paycode") == "R010") & (col("wdwbmap_double_flag") == "y"),
+                2 * col("cbr_basic_hourly_rate").cast("decimal(6,2)") + 
+                col("cwh_wrks_hrs").cast("decimal(6,2)")
+            ).when(
+                (col("wdwbmap_paycode") != "R010") & (col("wdwbmap_double_flag").isNull()),
+                2 * col("cr_value").cast("decimal(6,2)") * 
+                col("cwh_wrks_hrs").cast("decimal(6,2)")
+            ).when(
+                (col("wdwbmap_paycode") != "R010") & (col("wdwbmap_double_flag") == "y"),
+                2 * col("cr_value").cast("decimal(6,2)") * 
+                col("cwh_wrks_hrs").cast("decimal(6,2)")
+            ).otherwise(None)
         )
 
     def transform_df(self, joined_df):
