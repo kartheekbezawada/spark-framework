@@ -44,37 +44,80 @@ class PayrollDataProcessor:
         processed_df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
         return self.prefix_columns(processed_df, "wdwbmap")
 
-    def join_df(self, cwh_df, wdwbmap_df, cr_df, cbr_df):
-        joined_df = cwh_df.join(wdwbmap_df, 
-                                (col("cwh_tcode_name") == col("wdwbmap_tcode_name")) & 
-                                (col("cwh_htype_name") == col("wdwbmap_htype_name")) & 
-                                (col("cwh_emp_val4") == col("wdwbmap_emp_val4")), 
-                                "left_outer")
+    def join_df(self, process_colleague_worked_hours, process_wd_wb_mapping, process_colleague_rates, process_colleague_base_rate):
+        joined_df = process_colleague_worked_hours.join(process_wd_wb_mapping,
+                        (col("cwh_tcode_name") == col("wdwbmap_tcode_name")) & 
+                        (col("cwh_htype_name") == col("wdwbmap_htype_name")) & 
+                        (col("cwh_emp_val4") == col("wdwbmap_emp_val4")), 
+                        "left_outer")
 
-        joined_df = joined_df.join(cr_df, 
-                                   (col("cwh_pay_code") == col("cr_pay_code")) & 
-                                   (col("cwh_colleague_id") == col("cr_colleague_id")) & 
-                                   (col("cr_rate_seq") == 1), 
-                                   "left_outer")
+        joined_df = joined_df.join(process_colleague_rates, 
+                       (col("cwh_pay_code") == col("cr_pay_code")) & 
+                       (col("cwh_colleague_id") == col("cr_colleague_id")) & 
+                       (col("cr_rate_seq") == 1), 
+                       "left_outer")
 
-        joined_df = joined_df.join(cbr_df, 
-                                   (col("cwh_colleague_id") == col("cbr_colleague_id")) & 
-                                   (col("cbr_rate_seq") == 1), 
-                                   "left_outer")
+        joined_df = joined_df.join(process_colleague_base_rate, 
+                       (col("cwh_colleague_id") == col("cbr_colleague_id")) & 
+                       (col("cbr_rate_seq") == 1), 
+                       "left_outer")
 
         return joined_df
 
-    def transform_df(self, df):
-        pass  # Implement any additional transformations if needed
+
+    def select_and_rename_columns(self, df):
+        # Select and rename the required columns
+        return df.select(
+            "cwh_dock_name",
+            "cwh_emp_name",
+            "cwh_datekey",
+            "cwh_wrkd_starttime",
+            "cwh_wrkd_endtime",
+            "cwh_wrks_hrs",
+            "cwh_minor",
+            "cwh_seasonal",
+            "cwh_tcodename",
+            "cwh_htypename",
+            "cwh_htype_multiple",
+            "cwh_emp_val14",
+            "wdwbmap_paycode",
+            "wdwbmap_double_flag",
+            "cbr_basic_hourly_rate"
+        )
+
+    def apply_case_statement(self, df):
+        # Apply the case statement logic
+        return df.withColumn(
+            "calculated_wages",
+            when((col("wdwbmap_paycode") == "R010") & (col("wdwbmap_double_flag").isNull()),
+                 col("cbr_basic_hourly_rate").cast("decimal(6,2)") * 
+                 col("cwh_wrks_hrs").cast("decimal(6,2)") * 
+                 col("cwh_htype_multiple").cast("decimal(6,2)"))
+            .otherwise(None)
+        )
+
+    def transform_df(self, joined_df):
+        # Use the two functions to transform the DataFrame
+        df_with_columns = self.select_and_rename_columns(joined_df)
+        transformed_df = self.apply_case_statement(df_with_columns)
+        return transformed_df
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("VAW").getOrCreate()
     processor = PayrollDataProcessor(spark)
 
+    # Reading data from Delta Lake tables
     colleague_rates_df = processor.read_delta_table("delta_lake_path/wd_colleague_rates")
     colleague_base_rate_df = processor.read_delta_table("delta_lake_path/wd_colleague_base_rate")
     colleague_worked_hours_df = processor.read_delta_table("delta_lake_path/wb_colleague_hours")
     wd_wb_mapping_df = processor.read_delta_table("delta_lake_path/vaw_wd_wb_mapping")
 
-    pcr_df = processor.process_colleague_rates(colleague_rates_df)
-    pcbr_df = processor
+    # Processing data
+    pcr = processor.process_colleague_rates(colleague_rates_df)
+    pcbr = processor.process_colleague_base_rate(colleague_base_rate_df)
+    pcwhrs = processor.process_colleague_worked_hours(colleague_worked_hours_df)
+    pwdwbm = processor.process_wd_wb_mapping(wd_wb_mapping_df)
+    
+    joined_df = processor.join_df(pcwhrs, pwdwbm, pcr, pcbr)
+    transformed_df = processor.transform_df(joined_df)
+    transformed_df.show()
