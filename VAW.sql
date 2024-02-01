@@ -101,3 +101,5 @@ select * from
     left outer join colleague_base_rate as b on trim(b.colleague_id) = trim(c.colleague_id) and b.rate_seq = 1 ) K
     order by datekey,store_number,division,emp_val4
     
+
+    case when process_wd_wb_mapping.pay_code = 'R010' and d.double_flag is null then cast(b.basic_hourly_rate as NUMERIC(6,2)) * cast((c.wrkd_hrs as NUMERIC(6,2)) * cast(c.htype_multiple as NUMERIC(6,2)))
