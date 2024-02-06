@@ -122,6 +122,26 @@ class PayrollDataProcessor:
         transformed_df = self.apply_case_statement(df_with_columns)
         return transformed_df
 
+    def process_and_transform_data(self, rates_path, base_rate_path, worked_hours_path, mapping_path):
+        # Reading data from Delta Lake tables
+        colleague_rates_df = self.read_delta_table(rates_path)
+        colleague_base_rate_df = self.read_delta_table(base_rate_path)
+        colleague_worked_hours_df = self.read_delta_table(worked_hours_path)
+        wd_wb_mapping_df = self.read_delta_table(mapping_path)
+
+        # Processing data
+        pcr = self.process_colleague_rates(colleague_rates_df)
+        pcbr = self.process_colleague_base_rate(colleague_base_rate_df)
+        pcwhrs = self.process_colleague_worked_hours(colleague_worked_hours_df)
+        pwdwbm = self.process_wd_wb_mapping(wd_wb_mapping_df)
+        
+        # Joining DataFrames
+        joined_df = self.join_df(pcwhrs, pwdwbm, pcr, pcbr)
+        # Transforming DataFrames
+        transformed_df = self.transform_df(joined_df)
+
+        return transformed_df
+    
     def write_delta_table(self, df, path):
         # Extract year and month from the date column for partitioning
         df = df.withColumn("year", year(col("date"))) \
@@ -142,20 +162,15 @@ if __name__ == "__main__":
                         .config("fs.azure.account.key." + apha_account_name + ".blob.core.windows.net", apha_account_key) \
                         .getOrCreate()
     processor = PayrollDataProcessor(spark)
-
-    # Reading data from Delta Lake tables
-    colleague_rates_df = processor.read_delta_table("delta_lake_path/wd_colleague_rates")
-    colleague_base_rate_df = processor.read_delta_table("delta_lake_path/wd_colleague_base_rate")
-    colleague_worked_hours_df = processor.read_delta_table("delta_lake_path/wb_colleague_hours")
-    wd_wb_mapping_df = processor.read_delta_table("delta_lake_path/vaw_wd_wb_mapping")
-
-    # Processing data
-    pcr = processor.process_colleague_rates(colleague_rates_df)
-    pcbr = processor.process_colleague_base_rate(colleague_base_rate_df)
-    pcwhrs = processor.process_colleague_worked_hours(colleague_worked_hours_df)
-    pwdwbm = processor.process_wd_wb_mapping(wd_wb_mapping_df)
     
-    joined_df = processor.join_df(pcwhrs, pwdwbm, pcr, pcbr)
-    transformed_df = processor.transform_df(joined_df)
+    # Process and transform the data
+    transformed_df = processor.process_and_transform_data(
+        "delta_lake_path/wd_colleague_rates",
+        "delta_lake_path/wd_colleague_base_rate",
+        "delta_lake_path/wb_colleague_hours",
+        "delta_lake_path/vaw_wd_wb_mapping"
+    )
+    
+    # Show or write the transformed DataFrame
     transformed_df.show()
     processor.write_delta_table(transformed_df, "path/to/delta_table")
