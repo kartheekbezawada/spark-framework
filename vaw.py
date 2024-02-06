@@ -150,6 +150,12 @@ class PayrollDataProcessor:
 
         return transformed_df
     
+    def aggregate_data(self, df):
+        aggregated_df = df.groupBy("cwh_store_number", "cwh_division_number", "cwh_datekey") \
+            .agg(
+                sum("cwh_wrks_hrs").alias("sum_wrkd_hrs"),
+                sum("calculated_wages").alias("sum_calculated_wages"))
+    
                 
     def write_delta_table(self, df, delta_table_path):
         # Define the full path for the Delta table, including the storage configuration
@@ -168,9 +174,8 @@ class PayrollDataProcessor:
         else:
             df.write.format("delta") \
                 .mode("append") \
-                .partitionBy("year", "month") \
-                .option("overwriteSchema", "false") \
-                .save(full_delta_table_path)
+                .option("overwriteSchema", "true") \
+                .saveAsTable(full_delta_table_path)
         
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
