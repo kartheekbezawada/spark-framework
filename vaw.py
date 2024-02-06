@@ -92,6 +92,12 @@ class PayrollDataProcessor:
             "cbr_basic_hourly_rate"
         )
 
+    def add_composite_key(self, df):
+        # Add a composite key to the DataFrame
+        df = df.withColumn("composite_key", 
+                             F.concat("-",F.col("cwh_dock_name"),F.col("cwh_emp_name"),F.col("cwh_datekey"), F.col(htype_name), F.col("tcode_name")))
+        return df
+    
     def apply_case_statement(self, df):
         # Apply the case statement logic with multiple conditions
         return df.withColumn(
@@ -116,11 +122,6 @@ class PayrollDataProcessor:
             ).otherwise(None)
         )
 
-    def transform_df(self, joined_df):
-        # Use the two functions to transform the DataFrame
-        df_with_columns = self.select_and_rename_columns(joined_df)
-        transformed_df = self.apply_case_statement(df_with_columns)
-        return transformed_df
 
     def process_and_transform_data(self, rates_path, base_rate_path, worked_hours_path, mapping_path):
         # Reading data from Delta Lake tables
@@ -138,7 +139,10 @@ class PayrollDataProcessor:
         # Joining DataFrames
         joined_df = self.join_df(pcwhrs, pwdwbm, pcr, pcbr)
         # Transforming DataFrames
-        transformed_df = self.transform_df(joined_df)
+        df_with_columns = self.select_and_rename_columns(joined_df)
+        composite_key_df = self.add_composite_key(df_with_columns)
+        transformed_df = self.apply_case_statement(composite_key_df)
+       
 
         return transformed_df
     
@@ -158,19 +162,27 @@ class PayrollDataProcessor:
                 
         
 if __name__ == "__main__":
-    spark = SparkSession.builder.appName("VAW") \
-                        .config("fs.azure.account.key." + apha_account_name + ".blob.core.windows.net", apha_account_key) \
-                        .getOrCreate()
+    spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
+                        
     processor = PayrollDataProcessor(spark)
     
-    # Process and transform the data
+    # Access alpha_account_name and alpha_account_key from the processor instance
+    alpha_account_name = processor.alpha_account_name
+    alpha_account_key = processor.alpha_account_key
+
+    # If you need to use them for further Spark session configuration, do it here
+    # For example, if you need to reconfigure the Spark session with these details (though typically you'd set these at SparkSession creation)
+    spark.conf.set(f"fs.azure.account.key.{alpha_account_name}.blob.core.windows.net", alpha_account_key)
+
+    # Proceed with processing
     transformed_df = processor.process_and_transform_data(
         "delta_lake_path/wd_colleague_rates",
         "delta_lake_path/wd_colleague_base_rate",
         "delta_lake_path/wb_colleague_hours",
         "delta_lake_path/vaw_wd_wb_mapping"
     )
-    
-    # Show or write the transformed DataFrame
+
+    # Example of showing the transformed DataFrame
     transformed_df.show()
+    # Example of writing the transformed DataFrame
     processor.write_delta_table(transformed_df, "path/to/delta_table")
