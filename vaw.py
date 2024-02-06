@@ -1,15 +1,16 @@
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, row_number, current_date, date_sub, substring, when
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, row_number, current_date, date_sub, substring, when, concat_ws, year, month
 from pyspark.sql.window import Window
+from delta.tables import DeltaTable
 
 class PayrollDataProcessor:
     def __init__(self, spark):
         self.spark = spark
-        self.apha_account_name = "storage_account_name"
-        self.apha_account_key = "storage_account_key"
-        self.apha_container_name = "storage_container_name"
-        self.apha_storage_config = {"fs.azure.account.key." + self.apha_account_name + ".blob.core.windows.net": self.apha_account_key}
-        self.apha_storage_url = f"wasbs://{self.apha_container_name}@{self.apha_account_name}.blob.core.windows.net"
+        self.alpha_account_name = "storage_account_name"
+        self.alpha_account_key = "storage_account_key"
+        self.alpha_container_name = "storage_container_name"
+        self.alpha_storage_config = {"fs.azure.account.key." + self.apha_account_name + ".blob.core.windows.net": self.apha_account_key}
+        self.alpha_storage_url = f"wasbs://{self.apha_container_name}@{self.apha_account_name}.blob.core.windows.net"
         
     def read_delta_table(self, path):
         table_path = f"{self.apha_storage_url}/{path}"
@@ -40,6 +41,8 @@ class PayrollDataProcessor:
                          .withColumn("datekey", col("work_start_time").cast("date"))
                          .withColumn("store_number", substring(col("dock_name"), 1, 4))
                          .withColumn("division_number", substring(col("dock_name"), 5, 8))
+                         .withColumn("year", year(col("work_start_time")))
+                         .withColumn("month", month(col("work_start_time")))
                         )
         return self.prefix_columns(processed_df, "cwh")
 
@@ -78,6 +81,8 @@ class PayrollDataProcessor:
             "cwh_dock_name",
             "cwh_emp_name",
             "cwh_datekey",
+            "cwh_year",
+            "cwh_month",
             "cwh_wrkd_starttime",
             "cwh_wrkd_endtime",
             "cwh_wrks_hrs",
@@ -93,9 +98,8 @@ class PayrollDataProcessor:
         )
 
     def add_composite_key(self, df):
-        # Add a composite key to the DataFrame
         df = df.withColumn("composite_key", 
-                             F.concat("-",F.col("cwh_dock_name"),F.col("cwh_emp_name"),F.col("cwh_datekey"), F.col(htype_name), F.col("tcode_name")))
+                             concat_ws("-", col("cwh_dock_name"), col("cwh_emp_name"), col("cwh_datekey"), col("cwh_htypename"), col("cwh_tcodename")))
         return df
     
     def apply_case_statement(self, df):
@@ -146,20 +150,27 @@ class PayrollDataProcessor:
 
         return transformed_df
     
-    def write_delta_table(self, df, path):
-        # Extract year and month from the date column for partitioning
-        df = df.withColumn("year", year(col("date"))) \
-               .withColumn("month", month(col("date")))
-
-        # Define the path for the Delta table
-        delta_path = f"{self.apha_storage_url}/{path}"
-
-        # Write the DataFrame as a Delta table
-        df.write.format("delta") \
+                
+    def write_delta_table(self, df, delta_table_path):
+        # Define the full path for the Delta table, including the storage configuration
+        full_delta_table_path = f"{self.alpha_storage_url}/{delta_table_path}"
+    
+        # Check if the Delta table exists at the specified path
+        if DeltaTable.isDeltaTable(self.spark, full_delta_table_path):
+            deltaTable = DeltaTable.forPath(self.spark, full_delta_table_path)
+        
+            deltaTable.alias("target").merge(
+                df.alias("source"),
+                "target.composite_key = source.composite_key"
+            ).whenMatchedUpdateAll() \
+            .whenNotMatchedInsertAll() \
+         .execute()
+        else:
+            df.write.format("delta") \
                 .mode("append") \
                 .partitionBy("year", "month") \
-                .save(delta_path)
-                
+                .option("overwriteSchema", "false") \
+                .save(full_delta_table_path)
         
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
@@ -185,4 +196,5 @@ if __name__ == "__main__":
     # Example of showing the transformed DataFrame
     transformed_df.show()
     # Example of writing the transformed DataFrame
-    processor.write_delta_table(transformed_df, "path/to/delta_table")
+    delta_table_path = "path/to/delta_table"
+    processor.write_delta_table(transformed_df, delta_table_path)
