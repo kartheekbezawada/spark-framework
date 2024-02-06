@@ -203,3 +203,9 @@ if __name__ == "__main__":
     # Example of writing the transformed DataFrame
     delta_table_path = "path/to/delta_table"
     processor.write_delta_table(transformed_df, delta_table_path)
+    
+     Now, aggregate the data
+    aggregated_df = processor.aggregate_data(transformed_df)
+    
+    # Show the results
+    aggregated_df.show()
