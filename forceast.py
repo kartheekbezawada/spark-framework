@@ -14,17 +14,19 @@ class PayrollDataProcessor:
         self.set_storage_configuration()
 
     def set_storage_configuration(self):
-        # Sets the Azure Blob Storage configuration on the Spark session
         for config, value in self.alpha_storage_config.items():
             self.spark.conf.set(config, value)
 
     def read_table(self, table_path):
-        # Reads a table from Azure Blob Storage or Delta Lake
         full_path = f"{self.alpha_storage_url}/{table_path}"
-        return self.spark.read.format("delta").load(full_path)  # Change "delta" to "parquet" or other formats as necessary
+        df = self.spark.read.format("delta").load(full_path)  # Adjust the format as necessary
+        return self.drop_columns(df)
+
+    def drop_columns(self, df):
+        columns_to_drop = ["md_process_id", "md_source_ts", "md_created_ts", "md_source_path"]
+        return df.drop(*columns_to_drop)
 
     def write_table(self, df, table_path, mode="overwrite"):
-        # Writes the DataFrame to a table in Azure Blob Storage or Delta Lake
         full_path = f"{self.alpha_storage_url}/{table_path}"
         df.write.format("delta").mode(mode).save(full_path)
     
