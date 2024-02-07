@@ -150,12 +150,6 @@ class PayrollDataProcessor:
 
         return transformed_df
     
-    def aggregate_data(self, df):
-        aggregated_df = df.groupBy("cwh_store_number", "cwh_division_number", "cwh_datekey") \
-            .agg(
-                sum("cwh_wrks_hrs").alias("sum_wrkd_hrs"),
-                sum("calculated_wages").alias("sum_calculated_wages"))
-    
                 
     def write_delta_table(self, df, delta_table_path):
         # Define the full path for the Delta table, including the storage configuration
@@ -203,9 +197,3 @@ if __name__ == "__main__":
     # Example of writing the transformed DataFrame
     delta_table_path = "path/to/delta_table"
     processor.write_delta_table(transformed_df, delta_table_path)
-    
-     Now, aggregate the data
-    aggregated_df = processor.aggregate_data(transformed_df)
-    
-    # Show the results
-    aggregated_df.show()
