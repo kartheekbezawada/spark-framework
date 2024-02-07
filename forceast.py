@@ -41,6 +41,11 @@ class PayrollDataProcessor:
         self.spark.conf.set(f"fs.azure.account.key.{self.beta_account_name}.blob.core.windows.net", self.beta_account_key)
         self.spark.conf.set(f"fs.azure.account.key.{self.charlie_account_name}.blob.core.windows.net", self.charlie_account_key)
     
+    def prefix_columns(self, df, prefix):
+        # This method remains the same, it renames columns by adding a prefix.
+        for col_name in df.columns:
+            df = df.withColumnRenamed(col_name, f"{prefix}_{col_name}")
+        return df
 
     def alpha_read_table(self, table_path):
         full_path = f"{self.alpha_storage_url}/{table_path}"
@@ -61,11 +66,11 @@ class PayrollDataProcessor:
     # get only the columns that are needed, column names are store_nbr, dept_nbr, summary_date, sales_retail_amount and drop the rest
     def process_fsd(self, df):
         df = df.select("store_nbr", "dept_nbr", "summary_date", "sales_retail_amount")
-        return df
+        return self.prefix_columns(df, "fsd")
     
     def process_cd(self, df):
         df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
-        return df
+        return self.prefix_columns(df, "cd")
     
     def union_for_processing(self, fsd_df, cd_df):
         # Assuming 'summary_date' in 'fsd' and 'calendar_date' in 'cd' are already in date format or compatible string format.
@@ -106,3 +111,23 @@ if __name__ == "__main__":
     
     
         
+def union_for_processing(self, fsd_path, cd_path):
+        fsd_df = self.read_table(fsd_path, "alpha")  # Assuming fsd data is in 'alpha' account
+        cd_df = self.read_table(cd_path, "alpha")  # Assuming cd data is also in 'alpha' account
+
+        fsd_df = self.process_fsd(fsd_df)
+        cd_df = self.process_cd(cd_df)
+
+        # Assuming 'summary_date' in 'fsd_df' and 'calendar_date' in 'cd_df' are already in date format.
+        current_date_df = cd_df.filter(cd_df['cd_calendar_date'] == current_date())
+
+        # Join fsd_df with cd_df
+        joined_df = fsd_df.join(cd_df, fsd_df['fsd_summary_date'] == cd_df['cd_calendar_date'])
+
+        # Aggregation
+        result_df = joined_df.groupBy('fsd_store_nbr', 'fsd_dept_nbr', 'cd_wm_week').agg(
+            lit(date_format(current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
+            Fsum('fsd_sales_retail_amount').alias('total_sales')
+        )
+
+        return result_df
