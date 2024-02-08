@@ -132,3 +132,35 @@ select * from
      exists (select 1 from database.dbo.dim_calender_day as cd1
     where cd1.wm_week = cd.wm_week and cd1.calender_year = cd.calender_year and cd1.calender_date = convert(date,getdate(),103))
     group by s.store_nbr,cd.wm_week
+
+def process_for_current_week(self, fsd_df, cd_df):
+        # Convert dates in fsd_df and cd_df to a common format
+        fsd_df = fsd_df.withColumn("summary_date", to_date(col("summary_date"), "dd/MM/yyyy"))
+        cd_df = cd_df.withColumn("calendar_date", to_date(col("calendar_date"), "dd/MM/yyyy"))
+        
+        # Determine the current week and year
+        current_dt = current_date()
+        current_week = weekofyear(current_dt)
+        current_year = year(current_dt)
+        
+        # Filter cd_df for the current week and year
+        cd_current_week = cd_df.filter(
+            (weekofyear(col("calendar_date")) == current_week) &
+            (year(col("calendar_date")) == current_year)
+        ).selectExpr("wm_week as current_wm_week", "calendar_year as current_calendar_year", "calendar_date")
+        
+        # Join fsd_df with cd_df using an explicit condition and select columns to avoid ambiguity
+        # Note the use of alias for cd_current_week to differentiate its "wm_week" column
+        filtered_fsd = fsd_df.join(
+            cd_current_week,
+            (fsd_df["summary_date"] == cd_current_week["calendar_date"]) &
+            (cd_current_week["current_wm_week"].isNotNull())
+        )
+        
+        # Aggregate to calculate total sales for the current week, using the aliased "current_wm_week"
+        result_df = filtered_fsd.groupBy("store_nbr", "dept_nbr", "current_wm_week").agg(
+            Fsum("sales_retail_amt").alias("total_sales"),
+            lit(date_format(current_dt, "dd/MM/yyyy")).alias("VAW_wtd_date")
+        ).select("VAW_wtd_date", "store_nbr", "dept_nbr", "current_wm_week", "total_sales")
+        
+        return result_df
