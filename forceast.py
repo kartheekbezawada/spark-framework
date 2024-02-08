@@ -228,3 +228,40 @@ def union_for_processing(self, fsd_path, cd_path):
 
         return result_df
     
+from pyspark.sql.functions import col, to_date, current_date, date_format, weekofyear, year, sum as Fsum, lit
+
+def union_for_processing(self, fsd_df, cd_df):
+    # Ensure 'calendar_date' in cd_df is in date format
+    cd_df = cd_df.withColumn("cd_calendar_date", to_date(col("cd_calendar_date"), "dd/MM/yyyy"))
+    
+    # Determine the current week and year for filtering
+    current_week = weekofyear(current_date())
+    current_year = year(current_date())
+    
+    # Filter cd_df to only include entries for the current week and year
+    # This step is akin to verifying the existence of records for the current week and year as per the SQL 'EXISTS' logic
+    current_week_cd_df = cd_df.filter(
+        (weekofyear(col("cd_calendar_date")) == current_week) & 
+        (year(col("cd_calendar_date")) == current_year)
+    ).select("cd_wm_week", "cd_calendar_year").distinct()
+    
+    # Join fsd_df with cd_df where 'summary_date' matches 'calendar_date'
+    # and ensure the joined data is relevant for the current week and year
+    joined_df = fsd_df.join(
+        cd_df,
+        on=fsd_df["summary_date"] == cd_df["cd_calendar_date"],
+        how="inner"
+    ).join(
+        current_week_cd_df,
+        on=(cd_df["cd_wm_week"] == current_week_cd_df["cd_wm_week"]) &
+           (cd_df["cd_calendar_year"] == current_week_cd_df["cd_calendar_year"]),
+        how="inner"
+    )
+    
+    # Aggregate to calculate total sales for the current week
+    result_df = joined_df.groupBy("store_nbr", "dept_nbr", "cd_wm_week").agg(
+        Fsum("sales_retail_amt").alias("total_sales"),
+        lit(date_format(current_date(), "dd/MM/yyyy")).alias("VAW_wtd_date")
+    ).select("VAW_wtd_date", "store_nbr", "dept_nbr", "cd_wm_week", "total_sales")
+    
+    return result_df
