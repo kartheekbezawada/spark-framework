@@ -146,6 +146,50 @@ class PayrollDataProcessor:
 
         return result_df
     
+    def union_two_processing(self, scan_df, visit_df, calendar_df):
+        # Filter calendar_df for the current date and extract distinct weeks and years
+        current_week_and_year = calendar_df.filter(
+            to_date(col('cd_calendar_date'), 'dd/MM/yyyy') == current_date()
+        ).select('cd_wm_week', 'cd_calendar_year').distinct()
+
+        # Assuming scan_df, visit_df, and calendar_df have been prepared with the necessary prefixes
+
+        # Join scan_df with visit_df, and then with calendar_df
+        # Specify column selection to avoid ambiguity
+        joined_df = scan_df.join(
+            visit_df,
+            (scan_df["scan_visit_nbr"] == visit_df["visit_visit_nbr"]) &
+            (scan_df["scan_store_nbr"] == visit_df["visit_store_nbr"]) &
+            (to_date(scan_df["scan_visit_date"], 'dd/MM/yyyy') == to_date(visit_df["visit_visit_date"], 'dd/MM/yyyy')) &
+            (visit_df["visit_register_nbr"] == 80) &
+            scan_df["scan_other_income_ind"].isNull(),
+            "inner"
+        )
+
+        joined_df = joined_df.join(
+            calendar_df,
+            to_date(joined_df["scan_visit_date"], 'dd/MM/yyyy') == calendar_df["cd_calendar_date"],
+            "inner"
+        )
+
+        # To resolve ambiguity, explicitly select the columns to include from each DataFrame before the join
+        # This ensures "cd_wm_week" is clearly defined from the correct DataFrame
+        final_df = joined_df.alias('a').join(
+            current_week_and_year.alias('b'),
+            (col('a.cd_wm_week') == col('b.cd_wm_week')) &
+            (col('a.cd_calendar_year') == col('b.cd_calendar_year')),
+            "inner"
+        )
+
+        # Adjust the aggregation to reference the disambiguated column names directly
+        result_df = final_df.groupBy("a.scan_store_nbr", "a.cd_wm_week").agg(
+            lit(date_format(current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
+            lit(668).alias('dept_nbr'),
+            Fsum("a.scan_retail").alias("total_sales")
+        ).select("VAW_wtd_date", "a.scan_store_nbr", "dept_nbr", "a.cd_wm_week", "total_sales")
+
+        return result_df
+    
     
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
