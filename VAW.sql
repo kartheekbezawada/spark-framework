@@ -102,4 +102,33 @@ select * from
     order by datekey,store_number,division,emp_val4
     
 
-    case when process_wd_wb_mapping.pay_code = 'R010' and d.double_flag is null then cast(b.basic_hourly_rate as NUMERIC(6,2)) * cast((c.wrkd_hrs as NUMERIC(6,2)) * cast(c.htype_multiple as NUMERIC(6,2)))
+   Select convert(date,getdate(),103) as VAW_wtd_date,
+    store_nbr,
+    dept_nbr,
+    summary_date,
+    cd.wm_week as wm_week,
+    sum(sales_retail_amt) as total_sales,
+    from database.dbo.table as fsd
+    database.dbo.dim_calendar_day as cd
+    where fsd.summary_date = convert(date,cd.calender_date,103)
+    and exists (select 1 from database.dbo.dim_calender_day as cd1
+    where cd1.wm_week = cd.wm_week and cd1.calender_year = cd.calender_year and cd1.calender_date = convert(date,getdate(),103))
+    group by store_nbr, dept_nbr,wm_week
+    union all   
+    select convert(date,getdate(),103) as VAW_wtd_date,
+    s.store_nbr,
+    668 as dept_nbr,
+    cd.wm_week as wm_week,
+    sum(s.retail) as total_sales
+    from database.dbo.vw_Scan as s
+    database.dbo.vw_visit as v
+    database.dbo.dim_calendar_day as cd
+    where s.visit_nbr  = v.visit_nbr 
+    and v.store_nbr = s.store_nbr
+    and v.visit_date = s.visit_date
+    and v.visit_date = convert(date,cd.calender_date,103)
+    and v.register_nbr = 80
+    and s.other_incomde_ind is null 
+     exists (select 1 from database.dbo.dim_calender_day as cd1
+    where cd1.wm_week = cd.wm_week and cd1.calender_year = cd.calender_year and cd1.calender_date = convert(date,getdate(),103))
+    group by s.store_nbr,cd.wm_week

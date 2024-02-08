@@ -72,6 +72,14 @@ class PayrollDataProcessor:
         df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
         return self.prefix_columns(df, "cd")
     
+    def process_scan(self, df):
+        df = df.select("store_nbr", "scan_dept_nbr", "retail_price", "other_income_ind","visit_nbr", "visit_date")
+        return self.prefix_columns(df, "scan")
+    
+    def process_visit(self, df):
+        df = df.select( "visit_nbr","store_nbr", "visit_date", "register_nbr")
+        return self.prefix_columns(df, "visit")
+    
     def union_for_processing(self, fsd_df, cd_df):
         # Assuming 'summary_date' in 'fsd' and 'calendar_date' in 'cd' are already in date format or compatible string format.
         # If not, you might need to convert them using to_date() with the appropriate format.
@@ -94,6 +102,50 @@ class PayrollDataProcessor:
         ).select('VAW_wtd_date', 'store_nbr', 'dept_nbr', 'wm_week', 'total_sales')
 
         return result_df
+    
+    def union_two_processing(self, scan_df, visit_df, calendar_df):
+        # Assume scan_df, visit_df, and calendar_df are already read, processed, and passed to this method
+        
+        # Filter calendar_df for the current date and extract distinct weeks and years
+        current_week_and_year = calendar_df.filter(
+            to_date(col('cd_calendar_date'), 'dd/MM/yyyy') == current_date()
+        ).select('cd_wm_week', 'cd_calendar_year').distinct()
+
+        # Join scan_df with visit_df based on matching conditions
+        joined_df = scan_df.join(
+            visit_df,
+            (scan_df["scan_visit_nbr"] == visit_df["visit_visit_nbr"]) &
+            (scan_df["scan_store_nbr"] == visit_df["visit_store_nbr"]) &
+            (to_date(scan_df["scan_visit_date"], 'dd/MM/yyyy') == to_date(visit_df["visit_visit_date"], 'dd/MM/yyyy')) &
+            (visit_df["visit_register_nbr"] == 80) &
+            scan_df["scan_other_income_ind"].isNull(),
+            "inner"
+        )
+
+        # Then join the result with calendar_df
+        joined_df = joined_df.join(
+            calendar_df,
+            to_date(joined_df["scan_visit_date"], 'dd/MM/yyyy') == calendar_df["cd_calendar_date"],
+            "inner"
+        )
+
+        # Apply the filter based on current week and year
+        final_df = joined_df.join(
+            current_week_and_year,
+            (joined_df["cd_wm_week"] == current_week_and_year["cd_wm_week"]) &
+            (joined_df["cd_calendar_year"] == current_week_and_year["cd_calendar_year"]),
+            "inner"
+        )
+
+        # Aggregate to calculate total sales
+        result_df = final_df.groupBy("scan_store_nbr", "cd_wm_week").agg(
+            lit(date_format(current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
+            lit(668).alias('dept_nbr'),  # Assuming dept_nbr is constant
+            Fsum("scan_retail").alias("total_sales")
+        ).select("VAW_wtd_date", "scan_store_nbr", "dept_nbr", "cd_wm_week", "total_sales")
+
+        return result_df
+    
     
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
@@ -131,3 +183,4 @@ def union_for_processing(self, fsd_path, cd_path):
         )
 
         return result_df
+    
