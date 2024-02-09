@@ -72,6 +72,10 @@ class PayrollDataProcessor:
         df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
         return self.prefix_columns(df, "cd")
     
+    def process_cd1(self, df):
+        df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
+        return self.prefix_columns(df, "cd1")
+    
     def process_scan(self, df):
         df = df.select("store_nbr", "scan_dept_nbr", "retail_price", "other_income_ind","visit_nbr", "visit_date")
         return self.prefix_columns(df, "scan")
@@ -80,71 +84,43 @@ class PayrollDataProcessor:
         df = df.select( "visit_nbr","store_nbr", "visit_date", "register_nbr")
         return self.prefix_columns(df, "visit")
     
-    def union_for_processing(self, fsd_df, cd_df):
-        # Assuming 'summary_date' in 'fsd' and 'calendar_date' in 'cd' are already in date format or compatible string format.
-        # If not, you might need to convert them using to_date() with the appropriate format.
-        
-        # Filter 'cd' to include only entries for the current date
-        current_date_df = cd_df.filter(to_date(col('calendar_date'), 'dd/MM/yyyy') == to_date(lit(date_format(current_date(), 'dd/MM/yyyy')), 'dd/MM/yyyy'))
-
-        # Join 'fsd' with 'cd' to filter records matching the current week based on 'cd'
-        join_condition = to_date(fsd_df['summary_date'], 'dd/MM/yyyy') == to_date(cd_df['calendar_date'], 'dd/MM/yyyy')
-        filtered_fsd = fsd_df.join(cd_df, join_condition)
-
-        # Filter 'filtered_fsd' further based on the existence of matching 'wm_week' and 'calendar_year' in 'current_date_df'
-        # This replicates the EXISTS logic by ensuring 'filtered_fsd' only includes rows for the current week and year.
-        current_week_df = filtered_fsd.join(current_date_df, (filtered_fsd['wm_week'] == current_date_df['wm_week']) & (filtered_fsd['calendar_year'] == current_date_df['calendar_year']), 'inner')
-
-        # Aggregate to calculate total_sales
-        result_df = current_week_df.groupBy('store_nbr', 'dept_nbr', 'wm_week').agg(
-            lit(date_format(current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
-            _sum('sales_retail_amt').alias('total_sales')
-        ).select('VAW_wtd_date', 'store_nbr', 'dept_nbr', 'wm_week', 'total_sales')
-
+    def union_for_processing(self, fsd_df, cd_df, cd1_df):
+        # Register DataFrames as temp views
+        fsd_df.createOrReplaceTempView("fsd")
+        cd_df.createOrReplaceTempView("cd")
+        cd1_df.createOrReplaceTempView("cd1")  # Registering cd1_df as a temporary view
+    
+        # Adjusted SQL query to incorporate 'cd1' in the EXISTS condition
+        sql_query = """
+        SELECT
+            DATE_FORMAT(CURRENT_DATE(), 'dd/MM/yyyy') AS VAW_wtd_date,
+            fsd.store_nbr,
+            fsd.dept_nbr,
+            fsd.summary_date,
+            cd.wm_week,
+            SUM(fsd.sales_retail_amt) AS total_sales
+        FROM
+            fsd
+        JOIN
+            cd ON fsd.summary_date = DATE_FORMAT(cd.calendar_date, 'dd/MM/yyyy')
+        WHERE
+            EXISTS (
+                SELECT 1
+                FROM cd1
+                WHERE
+                    cd1.wm_week = cd.wm_week
+                    AND cd1.calendar_year = cd.calendar_year
+                    AND cd1.calendar_date = DATE_FORMAT(CURRENT_DATE(), 'dd/MM/yyyy')
+            )
+        GROUP BY
+            fsd.store_nbr, fsd.dept_nbr, cd.wm_week
+        """
+    
+        # Execute SQL query
+        result_df = self.spark.sql(sql_query)
+    
         return result_df
     
-    def union_two_processing(self, scan_df, visit_df, calendar_df):
-        # Assume scan_df, visit_df, and calendar_df are already read, processed, and passed to this method
-        
-        # Filter calendar_df for the current date and extract distinct weeks and years
-        current_week_and_year = calendar_df.filter(
-            to_date(col('cd_calendar_date'), 'dd/MM/yyyy') == current_date()
-        ).select('cd_wm_week', 'cd_calendar_year').distinct()
-
-        # Join scan_df with visit_df based on matching conditions
-        joined_df = scan_df.join(
-            visit_df,
-            (scan_df["scan_visit_nbr"] == visit_df["visit_visit_nbr"]) &
-            (scan_df["scan_store_nbr"] == visit_df["visit_store_nbr"]) &
-            (to_date(scan_df["scan_visit_date"], 'dd/MM/yyyy') == to_date(visit_df["visit_visit_date"], 'dd/MM/yyyy')) &
-            (visit_df["visit_register_nbr"] == 80) &
-            scan_df["scan_other_income_ind"].isNull(),
-            "inner"
-        )
-
-        # Then join the result with calendar_df
-        joined_df = joined_df.join(
-            calendar_df,
-            to_date(joined_df["scan_visit_date"], 'dd/MM/yyyy') == calendar_df["cd_calendar_date"],
-            "inner"
-        )
-
-        # Apply the filter based on current week and year
-        final_df = joined_df.join(
-            current_week_and_year,
-            (joined_df["cd_wm_week"] == current_week_and_year["cd_wm_week"]) &
-            (joined_df["cd_calendar_year"] == current_week_and_year["cd_calendar_year"]),
-            "inner"
-        )
-
-        # Aggregate to calculate total sales
-        result_df = final_df.groupBy("scan_store_nbr", "cd_wm_week").agg(
-            lit(date_format(current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
-            lit(668).alias('dept_nbr'),  # Assuming dept_nbr is constant
-            Fsum("scan_retail").alias("total_sales")
-        ).select("VAW_wtd_date", "scan_store_nbr", "dept_nbr", "cd_wm_week", "total_sales")
-
-        return result_df
     
     def union_two_processing(self, scan_df, visit_df, calendar_df):
         # Filter calendar_df for the current date and extract distinct weeks and years
@@ -190,118 +166,42 @@ class PayrollDataProcessor:
 
         return result_df
     
+    def union_three_processing(self, union_df, union_two_df):
+        # Union the two DataFrames
+        result_df = union_df.union(union_two_df)
+        return result_df
+    
+    # Write union_three_df to a Delta table
+    def write_union_three_df(self, df, delta_table_path):
+        full_delta_table_path = f"{self.alpha_storage_url}/{delta_table_path}"
+        df.write.format("delta").mode("overwrite").save(full_delta_table_path)
+        return df
+    
     
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
     processor = PayrollDataProcessor(spark)
 
-    # Load your 'fsd' and 'cd' DataFrames
-    fsd_df = processor.read_table("your_fsd_table_path", "alpha")  # Example call
-    cd_df = processor.read_table("your_cd_table_path", "alpha")  # Example call
+    fsd_path = "path/to/fsd"
+    cd_path = "path/to/cd"
+    cd1_path = "path/to/cd1"
+    scan_path = "path/to/scan"
+    visit_path = "path/to/visit"
+    
+    fsd_df = processor.alpha_read_table(fsd_path)
+    cd_df = processor.beta_read_table(cd_path)
+    cd1_df = processor.beta_read_table(cd1_path)
+    scan_df = processor.charlie_read_table(scan_path)
+    visit_df = processor.charlie_read_table(visit_path)
+    
+    union_df = processor.union_for_processing(fsd_df, cd_df, cd1_df)
+    union_two_df = processor.union_two_processing(scan_df, visit_df, calendar_df)
+    unuin_three_df = processor.union_three_processing(union_df, union_two_df)
+    
+    # Write the result to a Delta table
+    delta_table_path = "path/to/your/delta/table"
+    processor.write_union_three_df(unuin_three_df, delta_table_path)
+    
 
-    # Process the data
-    result_df = processor.union_for_processing(fsd_df, cd_df)
-    result_df.show()
     
-    
-    
-    
-        
-def union_for_processing(self, fsd_path, cd_path):
-        fsd_df = self.read_table(fsd_path, "alpha")  # Assuming fsd data is in 'alpha' account
-        cd_df = self.read_table(cd_path, "alpha")  # Assuming cd data is also in 'alpha' account
-
-        fsd_df = self.process_fsd(fsd_df)
-        cd_df = self.process_cd(cd_df)
-
-        # Assuming 'summary_date' in 'fsd_df' and 'calendar_date' in 'cd_df' are already in date format.
-        current_date_df = cd_df.filter(cd_df['cd_calendar_date'] == current_date())
-
-        # Join fsd_df with cd_df
-        joined_df = fsd_df.join(cd_df, fsd_df['fsd_summary_date'] == cd_df['cd_calendar_date'])
-
-        # Aggregation
-        result_df = joined_df.groupBy('fsd_store_nbr', 'fsd_dept_nbr', 'cd_wm_week').agg(
-            lit(date_format(current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
-            Fsum('fsd_sales_retail_amount').alias('total_sales')
-        )
-
-        return result_df
-    
-from pyspark.sql.functions import col, to_date, current_date, date_format, weekofyear, year, sum as Fsum, lit
-
-def union_for_processing(self, fsd_df, cd_df):
-    # Ensure 'calendar_date' in cd_df is in date format
-    cd_df = cd_df.withColumn("cd_calendar_date", to_date(col("cd_calendar_date"), "dd/MM/yyyy"))
-    
-    # Determine the current week and year for filtering
-    current_week = weekofyear(current_date())
-    current_year = year(current_date())
-    
-    # Filter cd_df to only include entries for the current week and year
-    # This step is akin to verifying the existence of records for the current week and year as per the SQL 'EXISTS' logic
-    current_week_cd_df = cd_df.filter(
-        (weekofyear(col("cd_calendar_date")) == current_week) & 
-        (year(col("cd_calendar_date")) == current_year)
-    ).select("cd_wm_week", "cd_calendar_year").distinct()
-    
-    # Join fsd_df with cd_df where 'summary_date' matches 'calendar_date'
-    # and ensure the joined data is relevant for the current week and year
-    joined_df = fsd_df.join(
-        cd_df,
-        on=fsd_df["summary_date"] == cd_df["cd_calendar_date"],
-        how="inner"
-    ).join(
-        current_week_cd_df,
-        on=(cd_df["cd_wm_week"] == current_week_cd_df["cd_wm_week"]) &
-           (cd_df["cd_calendar_year"] == current_week_cd_df["cd_calendar_year"]),
-        how="inner"
-    )
-    
-    # Aggregate to calculate total sales for the current week
-    result_df = joined_df.groupBy("store_nbr", "dept_nbr", "cd_wm_week").agg(
-        Fsum("sales_retail_amt").alias("total_sales"),
-        lit(date_format(current_date(), "dd/MM/yyyy")).alias("VAW_wtd_date")
-    ).select("VAW_wtd_date", "store_nbr", "dept_nbr", "cd_wm_week", "total_sales")
-    
-    return result_df
-
-
-from pyspark.sql.functions import col, to_date, current_date, date_format, weekofyear, year, sum as Fsum, lit
-
-def union_for_processing(self, fsd_df, cd_df):
-    # Ensure 'calendar_date' in cd_df is in date format
-    cd_df = cd_df.withColumn("cd_calendar_date", to_date(col("cd_calendar_date"), "dd/MM/yyyy"))
-    
-    # Determine the current week and year for filtering
-    current_week = weekofyear(current_date())
-    current_year = year(current_date())
-    
-    # Filter cd_df to find entries for the current week and year
-    current_week_cd_df = cd_df.filter(
-        (weekofyear(cd_df["cd_calendar_date"]) == current_week) & 
-        (year(cd_df["cd_calendar_date"]) == current_year)
-    ).distinct()
-    
-    # Join fsd_df with cd_df
-    joined_df = fsd_df.join(
-        cd_df,
-        on=fsd_df["summary_date"] == cd_df["cd_calendar_date"],
-        how="inner"
-    )
-    
-    # Filtering joined_df using the current week and year information
-    # Here, you need to disambiguate "cd_wm_week" by specifying it comes from cd_df after the join
-    # This approach assumes cd_df's column names are unique or have been made unique before this operation
-    final_df = joined_df.filter(
-        (weekofyear(joined_df["cd_calendar_date"]) == current_week) &
-        (year(joined_df["cd_calendar_date"]) == current_year)
-    )
-    
-    # Aggregate to calculate total sales for the current week, making sure to use unique column names
-    result_df = final_df.groupBy("store_nbr", "dept_nbr", final_df["cd_wm_week"]).agg(
-        Fsum(final_df["sales_retail_amt"]).alias("total_sales"),
-        lit(date_format(current_date(), "dd/MM/yyyy")).alias("VAW_wtd_date")
-    ).select("VAW_wtd_date", "store_nbr", "dept_nbr", "cd_wm_week", "total_sales")
-
-    return result_df
+   
