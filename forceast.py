@@ -266,6 +266,29 @@ WHERE
     )
 GROUP BY
     fsd.store_nbr, fsd.dept_nbr, cd.wm_week
+from pyspark.sql import SparkSession
+from delta.tables import DeltaTable
+
+# Initialize Spark Session with Delta support
+spark = SparkSession.builder \
+    .appName("DeltaTableDeleteExampleCharlieStorage") \
+    .config("spark.jars.packages", "io.delta:delta-core_2.12:0.8.0") \
+    .config("spark.delta.logStore.class", "org.apache.spark.sql.delta.storage.AzureLogStore") \
+    .config("fs.azure.account.key.your_storage_account_name.blob.core.windows.net", "your_storage_account_key") \
+    .enableHiveSupport() \
+    .getOrCreate()
+
+# Set the path to the Delta table in Charlie storage
+deltaTablePath = "wasbs://your_storage_container_name@your_storage_account_name.blob.core.windows.net/path/to/your/delta/table"
+
+# Load the Delta table
+deltaTable = DeltaTable.forPath(spark, deltaTablePath)
+
+# Delete rows where VAW_wtd_date equals '10/02/2024'
+deltaTable.delete("VAW_wtd_date = '10/02/2024'")
+
+# Show the effect of delete
+deltaTable.toDF().show()
 
 
     
