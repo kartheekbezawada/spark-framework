@@ -110,7 +110,7 @@ class PayrollDataProcessor:
                 WHERE
                     cd1.wm_week = cd.wm_week
                     AND cd1.calendar_year = cd.calendar_year
-                    AND cd1.calendar_date = DATE_FORMAT(CURRENT_DATE(), 'dd/MM/yyyy')
+                    AND cd1.calendar_date = DATE_FORMAT(CURRENT_DATE()-1, 'dd/MM/yyyy')
             )
         GROUP BY
             fsd.store_nbr, fsd.dept_nbr, cd.wm_week
@@ -202,6 +202,46 @@ if __name__ == "__main__":
     delta_table_path = "path/to/your/delta/table"
     processor.write_union_three_df(unuin_three_df, delta_table_path)
     
+    
+    def union_two_processing(self, scan_df, visit_df, calendar_df):
+    # Filter calendar_df for the day before the current date and extract distinct weeks and years
+    current_week_and_year = calendar_df.filter(
+        F.col('cd_calendar_date') == F.date_sub(F.current_date(), 1)
+    ).select('cd_wm_week', 'cd_calendar_year').distinct()
+
+    # Join scan_df with visit_df, and then with calendar_df
+    joined_df = scan_df.join(
+        visit_df,
+        (scan_df["scan_visit_nbr"] == visit_df["visit_visit_nbr"]) &
+        (scan_df["scan_store_nbr"] == visit_df["visit_store_nbr"]) &
+        (F.to_date(scan_df["scan_visit_date"], 'dd/MM/yyyy') == F.to_date(visit_df["visit_visit_date"], 'dd/MM/yyyy')) &
+        (visit_df["visit_register_nbr"] == 80) &
+        scan_df["scan_other_income_ind"].isNull(),
+        "inner"
+    )
+
+    joined_df = joined_df.join(
+        calendar_df,
+        F.to_date(joined_df["scan_visit_date"], 'dd/MM/yyyy') == F.to_date(calendar_df["cd_calendar_date"], 'dd/MM/yyyy'),
+        "inner"
+    )
+
+    # Adjust the join to include only records for the day before the current date
+    final_df = joined_df.alias('a').join(
+        current_week_and_year.alias('b'),
+        (F.col('a.cd_wm_week') == F.col('b.cd_wm_week')) &
+        (F.col('a.cd_calendar_year') == F.col('b.cd_calendar_year')),
+        "inner"
+    )
+
+    # Aggregate and select columns
+    result_df = final_df.groupBy("a.scan_store_nbr", "a.cd_wm_week").agg(
+        F.lit(F.date_format(F.current_date(), 'dd/MM/yyyy')).alias('VAW_wtd_date'),
+        F.lit(668).alias('dept_nbr'),  # Assuming dept_nbr is a constant
+        F.sum("a.scan_retail").alias("total_sales")
+    ).select("VAW_wtd_date", "a.scan_store_nbr", "dept_nbr", "a.cd_wm_week", "total_sales")
+
+    return result_df
 
     
    
