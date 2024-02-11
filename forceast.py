@@ -243,5 +243,30 @@ if __name__ == "__main__":
 
     return result_df
 
+
+SELECT
+    DATE_FORMAT(CURRENT_DATE(), 'dd/MM/yyyy') AS VAW_wtd_date,
+    fsd.store_nbr,
+    fsd.dept_nbr,
+    fsd.summary_date,
+    cd.wm_week,
+    SUM(fsd.sales_retail_amt) AS total_sales
+FROM
+    fsd
+JOIN
+    cd ON fsd.summary_date = DATE_FORMAT(cd.calendar_date, 'dd/MM/yyyy')
+WHERE
+    EXISTS (
+        SELECT 1
+        FROM cd1
+        WHERE
+            cd1.wm_week = cd.wm_week
+            AND cd1.calendar_year = cd.calendar_year
+            AND cd1.calendar_date = DATE_FORMAT(date_sub(CURRENT_DATE(), 1), 'dd/MM/yyyy')
+    )
+GROUP BY
+    fsd.store_nbr, fsd.dept_nbr, cd.wm_week
+
+
     
    
