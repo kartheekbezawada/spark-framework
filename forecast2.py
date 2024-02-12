@@ -1,7 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql import functions 
-import os
-import datetime as dt
+from pyspark.sql.functions import current_date, date_format, when
 
 class PayrollDataProcessor:
     def __init__(self, spark):
@@ -181,13 +179,47 @@ class PayrollDataProcessor:
         # Execute the join query
         df_joined = self.spark.sql(join_query)
         return df_joined
+
+
+# Your PayrollDataProcessor class definition goes here
+
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("PayrollDataProcessorApp").getOrCreate()
-    processor = PayrollDataProcessor(spark)
-
-
-    wkly_planner_path = " "
-    snap_shot_path = " "
-    ref_path = " "
-    ref2_path = " "
     
+    # Initialize your PayrollDataProcessor with the Spark session
+    processor = PayrollDataProcessor(spark)
+    
+    # Define your table paths (update these placeholders with your actual paths)
+    wkly_planner_path = "path/to/weekly_planner"
+    snapshot_path = "path/to/snapshot"
+    ref1_path = "path/to/ref1"
+    ref2_path = "path/to/ref2"
+    
+    # Reading and processing tables
+    # Assuming the methods are designed to read from Azure Blob and process them
+    df_wkly_planner = processor.alpha_read_table(wkly_planner_path)
+    df_wkly_planner_processed = processor.process_wkly_planner(df_wkly_planner)
+    
+    df_snapshot = processor.beta_read_table(snapshot_path)
+    df_snapshot_processed = processor.process_snapshot(df_snapshot)
+    
+    df_ref1 = processor.charlie_read_table(ref1_path)
+    df_ref1_processed = processor.process_ref(df_ref1)
+    
+    df_ref2 = processor.charlie_read_table(ref2_path)
+    df_ref2_processed = processor.process_ref2(df_ref2)
+    
+    # Example of joining snapshot with reference tables
+    # Here you should define how df_snapshot_processed, df_ref1_processed, and df_ref2_processed are passed and used
+    # Assuming you need to join them, ensure the dataframes are correctly prepared and available for joining
+    # For demonstration, the join logic inside join_ss_ref should be implemented or adjusted based on actual requirements
+    
+    # Make sure the join_ss_ref method is ready to handle the dataframes correctly
+    # The example join logic assumes you're ready to perform SQL operations on registered temp views
+    # df_joined = processor.join_ss_ref(df_snapshot_processed, df_ref1_processed, df_ref2_processed)
+
+    # Since the actual joining part is not fully detailed in terms of column names and logic,
+    # ensure the join_ss_ref method is correctly implemented with the correct SQL JOIN logic.
+    
+    # Remember to adjust paths, method implementations, and logic to fit your
+

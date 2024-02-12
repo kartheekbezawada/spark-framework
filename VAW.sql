@@ -166,7 +166,7 @@ def process_for_current_week(self, fsd_df, cd_df):
         return result_df
 
 
-        def union_for_processing(self, fsd_df, cd_df, cd1_df):
+    def union_for_processing(self, fsd_df, cd_df, cd1_df):
     # Register DataFrames as temp views
     fsd_df.createOrReplaceTempView("fsd")
     cd_df.createOrReplaceTempView("cd")
