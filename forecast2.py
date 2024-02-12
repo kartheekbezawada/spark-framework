@@ -62,13 +62,12 @@ class PayrollDataProcessor:
     
     
     # get only the columns that are needed, column names are store_nbr, dept_nbr, summary_date, sales_retail_amount and drop the rest
-    def read_wkly_planner(self, df):
+    def process_wkly_planner(self, df):
         df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
         return df
     
     def process_snapshot(self, df):
-        df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
-        return self.prefix_columns(df, "ss")
+        return df
     
     def process_ref(self, df):
         df = df.drop("md_process_id","md_source_ts","md_created_ts","md_source_path")
@@ -77,6 +76,45 @@ class PayrollDataProcessor:
     def process_ref2(self, df):
         df = df.select("store_nbr", "scan_dept_nbr", "retail_price", "other_income_ind","visit_nbr", "visit_date")
         return self.prefix_columns(df, "ref2")
+    
+    def transform_snapshot_delta_table(self, table_path):
+        # Create a temporary view for the DataFrame
+        df_snapshot.createOrReplaceTempView("table1")
+
+        # Execute the SQL query using Spark SQL
+        query = """
+        SELECT 
+            a_vaw_wtd_date as vaw_wtd_date, 
+            a_store_nbr as store_nbr, 
+            a_dept_nbr as dept_nbr, 
+            daily_delta_sales
+        FROM (
+            SELECT 
+                CAST(a.VAW_wtd_date AS DATE) AS a_vaw_wtd_date,
+                a.store_nbr AS a_store_nbr,
+                a.dept_nbr AS a_dept_nbr,
+                a.cd_wm_week AS a_cd_wm_week, 
+                COALESCE(a.total_sales, 0) AS total_sales,
+                CAST(b.VAW_wtd_date AS DATE) AS b_vaw_wtd_date,
+                DATE_ADD(CAST(a.VAW_wtd_date AS DATE), -1) AS a_minus1_date,
+                b.store_nbr AS b_store_nbr,
+                b.dept_nbr AS b_dept_nbr,
+                b.cd_wm_week AS b_cd_wm_week,
+                COALESCE(b.total_sales, 0.00) AS b1_total_sales,
+                COALESCE(a.total_sales, 0) - COALESCE(b.total_sales, 0.00) AS daily_delta_sales
+            FROM 
+                table1 AS a 
+                FULL OUTER JOIN table1 AS b ON a.store_nbr = b.store_nbr
+                AND a.dept_nbr = b.dept_nbr
+                AND a.cd_wm_week = b.cd_wm_week
+                AND CAST(b.VAW_wtd_date AS DATE) = DATE_ADD(CAST(a.VAW_wtd_date AS DATE), -1)
+            WHERE 
+                CAST(a.VAW_wtd_date AS DATE) = DATE_SUB(current_date(), 2)
+        ) AS derived_table
+        """
+
+        result_df = self.spark.sql(query)
+        return result_df
     
     
     def process_wkly_planner(self, df):
@@ -195,31 +233,9 @@ if __name__ == "__main__":
     ref1_path = "path/to/ref1"
     ref2_path = "path/to/ref2"
     
-    # Reading and processing tables
-    # Assuming the methods are designed to read from Azure Blob and process them
-    df_wkly_planner = processor.alpha_read_table(wkly_planner_path)
-    df_wkly_planner_processed = processor.process_wkly_planner(df_wkly_planner)
-    
+    # Processing the tables 
+    df_wkly_planner = processor.alpha_read_table(wkly_planner_path)    
     df_snapshot = processor.beta_read_table(snapshot_path)
-    df_snapshot_processed = processor.process_snapshot(df_snapshot)
-    
-    df_ref1 = processor.charlie_read_table(ref1_path)
-    df_ref1_processed = processor.process_ref(df_ref1)
-    
+    df_ref1 = processor.charlie_read_table(ref1_path)    
     df_ref2 = processor.charlie_read_table(ref2_path)
-    df_ref2_processed = processor.process_ref2(df_ref2)
-    
-    # Example of joining snapshot with reference tables
-    # Here you should define how df_snapshot_processed, df_ref1_processed, and df_ref2_processed are passed and used
-    # Assuming you need to join them, ensure the dataframes are correctly prepared and available for joining
-    # For demonstration, the join logic inside join_ss_ref should be implemented or adjusted based on actual requirements
-    
-    # Make sure the join_ss_ref method is ready to handle the dataframes correctly
-    # The example join logic assumes you're ready to perform SQL operations on registered temp views
-    # df_joined = processor.join_ss_ref(df_snapshot_processed, df_ref1_processed, df_ref2_processed)
-
-    # Since the actual joining part is not fully detailed in terms of column names and logic,
-    # ensure the join_ss_ref method is correctly implemented with the correct SQL JOIN logic.
-    
-    # Remember to adjust paths, method implementations, and logic to fit your
 
