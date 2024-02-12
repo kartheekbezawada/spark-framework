@@ -74,3 +74,18 @@ BEGIN CATCH
 END CATCH;
 
 GO
+
+
+
+SELECT
+    a.*,
+    b.*
+FROM 
+    TableA a
+LEFT JOIN (
+    SELECT *,
+           ROW_NUMBER() OVER(PARTITION BY JoinColumn ORDER BY SomeOrderColumn) AS rn
+    FROM TableB
+) b ON a.JoinColumn = b.JoinColumn AND b.rn = 1
+WHERE
+    a.SomeCondition = 'SomeValue'
