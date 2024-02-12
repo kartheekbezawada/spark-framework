@@ -83,20 +83,20 @@ class PayrollDataProcessor:
 
         # Execute the SQL query using Spark SQL
         query = """
-        SELECT 
-            a_vaw_wtd_date as vaw_wtd_date, 
-            a_store_nbr as store_nbr, 
-            a_dept_nbr as dept_nbr, 
+            SELECT 
+            a_vaw_wtd_date, 
+            a_store_nbr, 
+            a_dept_nbr, 
             daily_delta_sales
         FROM (
-            SELECT 
-                CAST(a.VAW_wtd_date AS DATE) AS a_vaw_wtd_date,
+                SELECT 
+                to_date(a.VAW_wtd_date, 'dd/MM/yyyy') AS a_vaw_wtd_date,
                 a.store_nbr AS a_store_nbr,
                 a.dept_nbr AS a_dept_nbr,
                 a.cd_wm_week AS a_cd_wm_week, 
                 COALESCE(a.total_sales, 0) AS total_sales,
-                CAST(b.VAW_wtd_date AS DATE) AS b_vaw_wtd_date,
-                DATE_ADD(CAST(a.VAW_wtd_date AS DATE), -1) AS a_minus1_date,
+                to_date(b.VAW_wtd_date, 'dd/MM/yyyy') AS b_vaw_wtd_date,
+                date_add(to_date(a.VAW_wtd_date, 'dd/MM/yyyy'), -1) AS a_minus1_date,
                 b.store_nbr AS b_store_nbr,
                 b.dept_nbr AS b_dept_nbr,
                 b.cd_wm_week AS b_cd_wm_week,
@@ -107,11 +107,11 @@ class PayrollDataProcessor:
                 FULL OUTER JOIN table1 AS b ON a.store_nbr = b.store_nbr
                 AND a.dept_nbr = b.dept_nbr
                 AND a.cd_wm_week = b.cd_wm_week
-                AND CAST(b.VAW_wtd_date AS DATE) = DATE_ADD(CAST(a.VAW_wtd_date AS DATE), -1)
-            WHERE 
-                CAST(a.VAW_wtd_date AS DATE) = DATE_SUB(current_date(), 2)
-        ) AS derived_table
-        """
+                AND to_date(b.VAW_wtd_date, 'dd/MM/yyyy') = date_add(to_date(a.VAW_wtd_date, 'dd/MM/yyyy'), -1)
+                WHERE 
+                    to_date(a.VAW_wtd_date, 'dd/MM/yyyy') = date_sub(current_date(), 2)
+                    ) AS derived_table
+                """
 
         result_df = self.spark.sql(query)
         return result_df
