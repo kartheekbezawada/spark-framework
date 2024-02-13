@@ -89,3 +89,19 @@ LEFT JOIN (
 ) b ON a.JoinColumn = b.JoinColumn AND b.rn = 1
 WHERE
     a.SomeCondition = 'SomeValue'
+
+
+    from pyspark.sql import SparkSession
+from pyspark.sql.functions import when, col
+
+# Initialize SparkSession (assuming you already have it as 'spark')
+spark = SparkSession.builder.appName("UpdateDataFrameValue").getOrCreate()
+
+# Sample DataFrame creation (assuming you already have your DataFrame)
+# df = spark.createDataFrame([("12/02/2024", "val_b", "val_c", "val_d")], ["A", "B", "C", "D"])
+
+# Update the value conditionally
+df = df.withColumn("A", when(col("A") == "12/02/2024", "11/02/2024").otherwise(col("A")))
+
+# Show the updated DataFrame
+df.show()
