@@ -90,18 +90,23 @@ LEFT JOIN (
 WHERE
     a.SomeCondition = 'SomeValue'
 
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import when
 
-    from pyspark.sql import SparkSession
-from pyspark.sql.functions import when, col
+# Initialize Spark session
+spark = SparkSession.builder.appName("DeltaTableUpdate").getOrCreate()
 
-# Initialize SparkSession (assuming you already have it as 'spark')
-spark = SparkSession.builder.appName("UpdateDataFrameValue").getOrCreate()
+# Assuming your Delta table is located at 'path_to_delta_table'
+delta_table_path = "/mnt/data/delta_table"
 
-# Sample DataFrame creation (assuming you already have your DataFrame)
-# df = spark.createDataFrame([("12/02/2024", "val_b", "val_c", "val_d")], ["A", "B", "C", "D"])
+# Read the Delta table
+df = spark.read.format("delta").load(delta_table_path)
 
-# Update the value conditionally
-df = df.withColumn("A", when(col("A") == "12/02/2024", "11/02/2024").otherwise(col("A")))
+# Perform the update using DataFrame transformations
+df_updated = df.withColumn("A", when(col("A") == "12/02/2024", "11/02/2024").otherwise(col("A")))
 
 # Show the updated DataFrame
-df.show()
+df_updated.show()
+
+# Write the updated DataFrame back to Delta format
+df_updated.write.format("delta").mode("overwrite").save(delta_table_path)
