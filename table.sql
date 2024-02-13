@@ -110,3 +110,40 @@ df_updated.show()
 
 # Write the updated DataFrame back to Delta format
 df_updated.write.format("delta").mode("overwrite").save(delta_table_path)
+
+
+select datekey,store_nbr,division,
+round((wp_hrs + ((actual_sales - wp_sales)/1000) * wkly_var_hrs / 100),2) as forcecasted_hrs,
+round(((wp_hrs + ((actual_sales - wp_sales)/1000) * wkly_var_hrs / 100) * wp_cost),2) as forecasted_wages
+from a table 
+
+class PayrollDataProcessor:
+    # ... other parts of the class ...
+
+    def joined_table(self):
+        # Logic to create and return a joined DataFrame
+        # For example:
+        # return spark.sql("SELECT * FROM some_temp_view")
+        pass
+
+    def calculate_forecasted_metrics(self):
+        # Get the DataFrame from the joined_table method
+        df = self.joined_table()
+        
+        # Perform the calculations on the DataFrame
+        df_forecasted = df.withColumn(
+            "forecasted_hrs",
+            round(col("wp_hrs") + (col("actual_sales") - col("wp_sales")) / 1000 * col("wkly_var_hrs") / 100, 2)
+        ).withColumn(
+            "forecasted_wages",
+            round((col("wp_hrs") + ((col("actual_sales") - col("wp_sales")) / 1000) * col("wkly_var_hrs") / 100) * col("wp_cost"), 2)
+        )
+        
+        # Return the transformed DataFrame
+        return df_forecasted
+
+# Usage:
+# Assuming `spark` is the SparkSession
+# processor = PayrollDataProcessor(spark)
+# forecasted_df = processor.calculate_forecasted_metrics()
+# forecasted_df.show()
