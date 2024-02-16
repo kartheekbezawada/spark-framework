@@ -15,8 +15,8 @@ class PayrollDataProcessor:
 
         
     def read_delta_table(self, path):
-        table_path = f"{self.apha_storage_url}/{path}"
-        return self.spark.read.options(**self.apha_storage_config).format("delta").load(table_path)
+        table_path = f"{self.alpha_storage_url}/{path}"
+        return self.spark.read.options(**self.alpha_storage_config).format("delta").load(table_path)
 
     def prefix_columns(self, df, prefix):
         for col_name in df.columns:
@@ -54,11 +54,11 @@ class PayrollDataProcessor:
         query = """
         SELECT
             cwh.cwh_dock_name,
-            substring(cast(cwh.cwh_dock_name as string), 1, 4) as store_number, 
-            substring(cast(cwh.cwh_dock_name as string), 5, 8) as division,
-            cwh_emp_name as colleague_id,
+            substring(cast(cwh.cwh_dock_name as string), 1, 4) as cwh_store_number, 
+            substring(cast(cwh.cwh_dock_name as string), 5, 8) as cwh_division,
+            cwh_emp_name,
             cwh.cwh_wrkd_hrs,
-            cwh.cwh_wrks_workdate as datekey,
+            cwh.cwh_wrks_workdate,
             cwh.cwh_wrkd_Start_time,
             cwh.cwh_wrkd_end_time,
             cwh.cwh_tcode_name,
@@ -155,6 +155,61 @@ class PayrollDataProcessor:
         
         result_df = self.spark.sql(query)
         return result_df
+    
+    
+    from pyspark.sql import functions as F
+from pyspark.sql.functions import col, lit, max as max_
+
+def transform_colleague_rates(spark, cwh_processed, wd_wb_map_processed, cbr_processed, cr_processed, div_cc_processed, cr_processed_a1, cbr_processed_b1):
+    # Join operations equivalent to the initial part of the SQL query
+    k = cwh_processed.alias("c") \
+        .join(wd_wb_map_processed.alias("d"), 
+              (col("c.cwh_tcode_name") == col("d.wdwbmap_tcode_name")) & 
+              (col("c.cwh_htype_name") == col("d.wdwbmap_htype_name")) & 
+              (col("c.cwh_emp_val4") == col("d.wdwbmap_emp_val4")), 
+              "left_outer") \
+        .join(cr_processed.alias("a"), 
+              (col("d.wdwbmap_pay_code") == col("a.cr_pay_code")) & 
+              (col("c.cwh_emp_name") == col("a.cr_colleague_id")) & 
+              (col("a.cr_start_date") <= col("c.cwh_wrks_work_date")), 
+              "left_outer") \
+        .join(cbr_processed.alias("b"), 
+              (col("b.cbr_colleague_id") == col("c.cwh_emp_name")) & 
+              (col("b.cbr_effective_date") <= col("c.cwh_wrks_work_date")), 
+              "left_outer") \
+        .withColumn("max_cr_start_date", 
+                    max_("a.cr_start_date").over(Window.partitionBy("a.cr_colleague_id", "a.cr_pay_code").orderBy(col("a.cr_start_date").desc()))) \
+        .withColumn("max_cbr_effective_date", 
+                    max_("b.cbr_effective_date").over(Window.partitionBy("b.cbr_colleague_id").orderBy(col("b.cbr_effective_date").desc()))) \
+        .filter((col("a.cr_start_date") == col("max_cr_start_date")) & (col("b.cbr_effective_date") == col("max_cbr_effective_date"))) \
+        .selectExpr("c.cwh_wrks_work_date as date_key", 
+                    "c.cwh_store_number as store_number", 
+                    "c.cwh_division", 
+                    "d.wdwbmap_pay_code as mp_pay_code", 
+                    "c.cwh_emp_name as wb_cid", 
+                    "a.cr_colleague_id as wd_bcid", 
+                    "b.cbr_cost_centre", 
+                    "c.cwh_wrkd_hrs", 
+                    "a.cr_pay_code as wd_pay_code", 
+                    "a.cr_pay_unit", 
+                    "CASE WHEN d.wdwbmap_pay_code <> 'R010' THEN b.cbr_basic_hourly_rate + a.cr_value END AS premium_rate",
+                    "CASE WHEN d.wdwbmap_pay_code = 'R010' THEN b.cbr_basic_hourly_rate END AS basic_rate",
+                    """CASE
+                        WHEN d.wdwbmap_pay_code = 'R010' AND d.wdwbmap_double_flag IS NULL THEN b.cbr_basic_hourly_rate * c.cwh_wrkd_hrs
+                        WHEN d.wdwbmap_pay_code = 'R010' AND d.wdwbmap_double_flag = 'Y' THEN 2 * b.cbr_basic_hourly_rate * c.cwh_wrkd_hrs
+                        WHEN d.wdwbmap_pay_code <> 'R010' AND d.wdwbmap_double_flag IS NULL THEN (b.cbr_basic_hourly_rate + a.cr_value) * c.cwh_wrkd_hrs
+                        WHEN d.wdwbmap_pay_code <> 'R010' AND d.wdwbmap_double_flag = 'Y' THEN 2 * (b.cbr_basic_hourly_rate + a.cr_value) * c.cwh_wrkd_hrs
+                      END AS calculated_wages""")
+
+    # Join with div_cc_processed for the division mapping
+    result_df = k.join(div_cc_processed.alias("dcc"), col("k.cwh_division") == col("dcc.dcch_cc_mapping"), "left_outer") \
+                 .groupBy("date_key", "store_number", "dcc.vaw_division") \
+                 .agg(F.sum("cwh_wrkd_hrs").alias("Actual_Hours"), 
+                      F.sum("calculated_wages").alias("Actual_Wages")) \
+                 .orderBy("date_key", "store_number", "dcc.vaw_division")
+
+    return result_df
+
     
     if __name__ == "__main__":
     
