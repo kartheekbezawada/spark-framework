@@ -78,7 +78,108 @@ class PayrollDataProcessor:
         """
         result_df = self.spark.sql(query)
         return result_df
-            
+
+    def create_temp_views(self):
+        # Assuming DataFrames are already loaded as attributes of the spark session object
+        self.spark.cwh_processed.createOrReplaceTempView("cwh_processed")
+        self.spark.wd_wb_map_processed.createOrReplaceTempView("wd_wb_mapping_processed")
+        self.spark.cbr_processed.createOrReplaceTempView("cbr_processed")
+        self.spark.cr_processed.createOrReplaceTempView("cr_processed")
+        self.spark.div_cc_processed.createOrReplaceTempView("div_cc_processed")
+        self.spark.cr_processed_a1.createOrReplaceTempView("cr_processed_a1")
+        self.spark.cbr_processed_b1.createOrReplaceTempView("cbr_processed_b1")
+
+        # Create additional temporary views for the maximum effective dates
+        self.spark.sql("""
+        CREATE OR REPLACE TEMP VIEW max_cr_start_date AS
+        SELECT cr_colleague_id, cr_pay_code, MAX(cr_start_date) as max_start_date
+        FROM cr_processed_a1
+        GROUP BY cr_colleague_id, cr_pay_code
+        """)
+
+        self.spark.sql("""
+        CREATE OR REPLACE TEMP VIEW max_cbr_effective_date AS
+        SELECT cbr_colleague_id, MAX(cbr_effective_date) as max_effective_date
+        FROM cbr_processed_b1
+        GROUP BY cbr_colleague_id
+        """)
+
+    def transform_colleague_rates(self):
+        # Ensure all temp views are created
+        self.create_temp_views()
+
+        # Final query using temporary views
+        query = """
+        SELECT
+            k.date_key,
+            k.store_number,
+            dcc.vaw_division,
+            COALESCE(k.wrk_hrs, 0.00) as Actual_Hours,
+            COALESCE(SUM(k.calculated_wages), 0.00) as Actual_Wages
+        FROM
+            (SELECT
+                c.cwh_wrks_work_date as date_key,
+                c.cwh_store_number as store_number,
+                c.cwh_division,
+                c.cwh_tcode_name,
+                c.cwh_htype_name,
+                c.cwh_emp_val4,
+                d.wdwbmap_pay_code as mp_pay_code,
+                c.cwh_emp_name as wb_cid,
+                a.cr_colleague_id as wd_bcid,
+                b.cbr_cost_centre,
+                c.cwh_wrkd_hrs,
+                a.cr_pay_code as wd_pay_code,
+                a.cr_pay_unit,
+                CASE
+                    WHEN d.wdwbmap_pay_code <> 'R010' THEN CAST(b.cbr_basic_hourly_rate AS numeric(6,2)) + CAST(a.cr_value AS numeric(6,2)) END AS premium_rate,
+                CASE
+                    WHEN d.wdwbmap_pay_code = 'R010' THEN b.cbr_basic_hourly_rate END AS basic_rate,
+                CASE
+                    WHEN (d.wdwbmap_pay_code = 'R010' AND d.wdwbmap_double_flag IS NULL) THEN CAST(b.cbr_basic_hourly_rate AS numeric(6,2)) * CAST(c.cwh_wrkd_hrs AS numeric(6,2))
+                    WHEN (d.wdwbmap_pay_code = 'R010' AND d.wdwbmap_double_flag = 'Y') THEN 2 * CAST(b.cbr_basic_hourly_rate AS numeric(6,2)) * CAST(c.cwh_wrkd_hrs AS numeric(6,2))
+                    WHEN (d.wdwbmap_pay_code <> 'R010' AND d.wdwbmap_double_flag IS NULL) THEN (CAST(b.cbr_basic_hourly_rate AS numeric(6,2)) + CAST(a.cr_value AS numeric(6,2))) * CAST(c.cwh_wrkd_hrs AS numeric(6,2))
+                    WHEN (d.wdwbmap_pay_code <> 'R010' AND d.wdwbmap_double_flag = 'Y') THEN 2 * (CAST(b.cbr_basic_hourly_rate AS numeric(6,2)) + CAST(a.cr_value AS numeric(6,2))) * CAST(c.cwh_wrkd_hrs AS numeric(6,2))
+                END AS calculated_wages,
+                d.wdwbmap_double_flag,
+                b.cbr_effective_date,
+                b.cbr_job_code,
+                c.cwh_wrkd_Start_time,
+                c.cwh_wrkd_end_time
+            FROM
+                cwh_processed c
+                LEFT JOIN wd_wb_mapping_processed d ON c.cwh_tcode_name = d.wdwbmap_tcode_name
+                AND c.cwh_htype_name = d.wdwbmap_htype_name
+                AND c.cwh_emp_val4 = d.wdwbmap_emp_val4
+                LEFT JOIN cr_processed a ON d.wdwbmap_pay_code = a.cr_pay_code
+                AND c.cwh_emp_name = a.cr_colleague_id
+                LEFT JOIN max_cr_start_date mcsd ON a.cr_colleague_id = mcsd.cr_colleague_id
+                AND a.cr_pay_code = mcsd.cr_pay_code
+                AND a.cr_start_date = mcsd.max_start_date
+                LEFT JOIN cbr_processed b ON b.cbr_colleague_id = c.cwh_emp_name
+                AND b.cbr_effective_date <= c.cwh_wrks_work_date
+                LEFT JOIN max_cbr_effective_date mced ON b.cbr_colleague_id = mced.cbr_colleague_id
+                AND b.cbr_effective_date = mced.max_effective_date) k
+            LEFT JOIN div_cc_processed dcc ON k.cwh_division = dcc.dcch_cc_mapping
+        GROUP BY
+            k.date_key, k.store_number, dcc.vaw_division
+        ORDER BY k.date_key, k.store_number, dcc.vaw_division
+        """
+
+        result_df = self.spark.sql(query)
+        return result_df
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     def create_temp_views(cwh_processed, wd_wb_map_processed, cbr_processed, cr_processed, div_cc_processed, cr_processed_a1, cbr_processed_b1):
         cwh_processed.createOrReplaceTempView("cwh_processed")
         wd_wb_map_processed.createOrReplaceTempView("wd_wb_mapping_processed")
@@ -136,13 +237,14 @@ class PayrollDataProcessor:
                 AND c.cwh_htype_name = d.wdwbmap_htype_name
                 AND c.cwh_emp_val4 = d.wdwbmap_emp_val4
                 LEFT OUTER JOIN cr_processed AS a ON d.wdwbmap_pay_code = a.cr_pay_code
-                AND c.cwh_emp_name = a.cr_colleague_id
+                AND a.cr_colleague_id = c.cwh_emp_name 
                 AND a.cr_start_date <= c.cwh_wrks_work_date
                 AND a.cr_start_date = (SELECT MAX(cr_start_date) FROM cr_processed_a1 
                                        WHERE a1.cr_colleague_id = a.cr_colleague_id
                                        AND a1.cr_pay_code = a.cr_pay_code
                                        AND a1.cr_start_date <= c.cwh_wrks_work_date)
-                LEFT OUTER JOIN cbr_processed AS b ON b.cbr_colleague_id = c.cwh_emp_name
+                LEFT OUTER JOIN cbr_processed AS b ON 
+                    b.cbr_colleague_id = c.cwh_emp_name
                 AND b.cbr_effective_date <= c.cwh_wrks_work_date
                 AND b.cbr_effective_date = (SELECT MAX(cbr_effective_date) FROM cbr_processed_b1
                                             WHERE b1.cbr_colleague_id = b.cbr_colleague_id
@@ -253,7 +355,75 @@ def transform_colleague_rates(spark, cwh_processed, wd_wb_map_processed, cbr_pro
     
     
     
+    def transform_colleague_rates(session):
+    # Step 1: Create necessary temporary views from session data
+    create_temp_views(session.cwh_processed, session.wd_wb_map_processed, session.cbr_processed,
+                      session.cr_processed, session.div_cc_processed, session.cr_processed_a1,
+                      session.cbr_processed_b1)
+
+    # Step 2: Create temporary view for the max cr_start_date
+    session.spark.sql("""
+    CREATE OR REPLACE TEMP VIEW max_cr_start_date AS
+    SELECT cr_colleague_id, cr_pay_code, MAX(cr_start_date) as max_start_date
+    FROM cr_processed_a1
+    GROUP BY cr_colleague_id, cr_pay_code
+    """)
     
+    # Step 3: Create temporary view for the max cbr_effective_date
+    session.spark.sql("""
+    CREATE OR REPLACE TEMP VIEW max_cbr_effective_date AS
+    SELECT cbr_colleague_id, MAX(cbr_effective_date) as max_effective_date
+    FROM cbr_processed_b1
+    GROUP BY cbr_colleague_id
+    """)
+
+    # Step 4: Execute the main query with joins to the above temporary views instead of correlated subqueries
+    query = """
+    SELECT
+        k.date_key,
+        k.store_number,
+        dcc.vaw_division,
+        COALESCE(k.wrk_hrs, 0.00) as Actual_Hours,
+        COALESCE(SUM(k.calculated_wages), 0.00) as Actual_Wages
+    FROM
+        (SELECT
+            c.cwh_wrks_work_date as date_key,
+            c.cwh_store_number as store_number,
+            c.cwh_division,
+            c.cwh_tcode_name,
+            c.cwh_htype_name,
+            c.cwh_emp_val4,
+            d.wdwbmap_pay_code as mp_pay_code,
+            c.cwh_emp_name as wb_cid,
+            a.cr_colleague_id as wd_bcid,
+            b.cbr_cost_centre,
+            c.cwh_wrkd_hrs as wrk_hrs,
+            a.cr_pay_code as wd_pay_code,
+            a.cr_pay_unit,
+            CASE
+                WHEN d.wdwbmap_pay_code <> 'R010' THEN CAST(b.cbr_basic_hourly_rate AS numeric(6,2)) + CAST(a.cr_value AS numeric(6,2))
+                WHEN d.wdwbmap_pay_code = 'R010' THEN b.cbr_basic_hourly_rate
+            END AS rate,
+            CASE
+                WHEN (d.wdwbmap_double_flag = 'Y') THEN 2 * CAST(c.cwh_wrkd_hrs AS numeric(6,2)) * rate
+                ELSE CAST(c.cwh_wrkd_hrs AS numeric(6,2)) * rate
+            END AS calculated_wages
+        FROM
+            cwh_processed AS c
+            LEFT JOIN wd_wb_map_processed AS d ON c.cwh_tcode_name = d.wdwbmap_tcode_name AND c.cwh_htype_name = d.wdwbmap_htype_name AND c.cwh_emp_val4 = d.wdwbmap_emp_val4
+            LEFT JOIN cr_processed AS a ON d.wdwbmap_pay_code = a.cr_pay_code AND c.cwh_emp_name = a.cr_colleague_id
+            LEFT JOIN max_cr_start_date AS mcsd ON a.cr_colleague_id = mcsd.cr_colleague_id AND a.cr_pay_code = mcsd.cr_pay_code AND a.cr_start_date = mcsd.max_start_date
+            LEFT JOIN cbr_processed AS b ON b.cbr_colleague_id = c.cwh_emp_name
+            LEFT JOIN max_cbr_effective_date AS mced ON b.cbr_colleague_id = mced.cbr_colleague_id AND b.cbr_effective_date = mced.max_effective_date) k
+    LEFT JOIN div_cc_processed AS dcc ON k.cwh_division = dcc.dcch_cc_mapping
+    GROUP BY
+        k.date_key, k.store_number, dcc.vaw_division
+    ORDER BY k.date_key, k.store_number, dcc.vaw_division
+    """
+
+    result_df = session.spark.sql(query)
+    return result_df
+
     
             
        
