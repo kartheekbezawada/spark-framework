@@ -206,50 +206,35 @@ def process_for_current_week(self, fsd_df, cd_df):
 SELECT
   colleague_id,
   pay_code,
-  MIN(start_date) AS EffectiveStartDate,
-  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) IS NULL THEN GETDATE()
-       ELSE LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) - INTERVAL 1 DAY
-  END AS EffectiveEndDate
-FROM your_table;
-
-WITH EffectivePayCodes AS (
-  SELECT
-    colleague_id,
-    pay_code,
-    start_date,
-    LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) AS previous_start_date
-  FROM your_table
-)
-SELECT
-  colleague_id,
-  pay_code,
   start_date,
-  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) IS NULL THEN GETDATE() ELSE LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) - INTERVAL 1 DAY END AS effective_end_date
-FROM EffectivePayCodes
-
-SELECT
-  colleague_id,
-  pay_code,
-  MIN(start_date) AS EffectiveStartDate,
-  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) IS NULL THEN GETDATE()
-       ELSE LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) - INTERVAL 1 DAY
-  END AS EffectiveEndDate
-FROM your_table;
-
-WITH EffectiveDates AS (
-  SELECT
-    colleague_id,
-    pay_code,
-    start_date,
-    LAG(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date) AS prev_start_date
-  FROM your_table
-)
-SELECT
-  colleague_id,
-  pay_code,
-  start_date,
-  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date) IS NULL
-       THEN GETDATE()
-       ELSE LAG(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date)
+  start_date AS effective_start_date,
+  CASE
+    WHEN LEAD(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date) IS NULL THEN NULL
+    -- No following record, effective end date can be null
+    ELSE DATEADD(DAY, -1, LEAD(start_date))
   END AS effective_end_date
 FROM EffectiveDates
+
+
+WITH RankedValues AS (
+    SELECT
+        colleague_id,
+        pay_code,
+        start_date,
+        LEAD(start_date, 1) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date) AS next_start_date,
+        value
+    FROM
+        YourTableName
+)
+SELECT
+    colleague_id,
+    pay_code,
+    start_date AS effective_start_date,
+    DATEADD(day, -1, next_start_date) AS effective_end_date,
+    value
+FROM
+    RankedValues
+ORDER BY
+    colleague_id,
+    pay_code,
+    start_date;
