@@ -97,9 +97,9 @@ select * from
     c.wrkd_start_time,c.wrkd_end_time
     from colleague_worked_hours as calculated_wages
     left outer join wd_wb_mapping as d on d.tcode_name = c.tcode_name and d.htype_name = c.htype_name and d.emp_val4 = c.emp_val4
-    left outer join colleague_rates as a on d.pay_code = a.pay_code and c.colleague_id = a.colleague_id and a.rate_seq = 1
-    left outer join colleague_base_rate as b on trim(b.colleague_id) = trim(c.colleague_id) and b.rate_seq = 1 ) K
-    order by datekey,store_number,division,emp_val4
+    left outer join colleague_rates as a on d.pay_code = a.pay_code and c.colleague_id = a.colleague_id and a.start_date <= c.datekey and a.start_date = (select max(start_date) from colleague_rates as a1 where a1.colleague_id = a.colleague_id and a1.pay_code = a.pay_code and a1.start_date <= c.datekey)
+    left outer join colleague_base_rate as b on b.colleague_id =c.colleague_id and b.effective_date <= c.datekey and b.effective_date = (select max(effective_date) from colleague_base_rate as b1 where b1.colleague_id = b.colleague_id and b1.effective_date <= c.datekey)
+) as wages
     
 
    Select convert(date,getdate(),103) as VAW_wtd_date,
@@ -202,3 +202,54 @@ def process_for_current_week(self, fsd_df, cd_df):
     result_df = self.spark.sql(sql_query)
     
     return result_df
+
+SELECT
+  colleague_id,
+  pay_code,
+  MIN(start_date) AS EffectiveStartDate,
+  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) IS NULL THEN GETDATE()
+       ELSE LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) - INTERVAL 1 DAY
+  END AS EffectiveEndDate
+FROM your_table;
+
+WITH EffectivePayCodes AS (
+  SELECT
+    colleague_id,
+    pay_code,
+    start_date,
+    LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) AS previous_start_date
+  FROM your_table
+)
+SELECT
+  colleague_id,
+  pay_code,
+  start_date,
+  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) IS NULL THEN GETDATE() ELSE LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) - INTERVAL 1 DAY END AS effective_end_date
+FROM EffectivePayCodes
+
+SELECT
+  colleague_id,
+  pay_code,
+  MIN(start_date) AS EffectiveStartDate,
+  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) IS NULL THEN GETDATE()
+       ELSE LAG(start_date) OVER (PARTITION BY colleague_id ORDER BY start_date) - INTERVAL 1 DAY
+  END AS EffectiveEndDate
+FROM your_table;
+
+WITH EffectiveDates AS (
+  SELECT
+    colleague_id,
+    pay_code,
+    start_date,
+    LAG(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date) AS prev_start_date
+  FROM your_table
+)
+SELECT
+  colleague_id,
+  pay_code,
+  start_date,
+  CASE WHEN LAG(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date) IS NULL
+       THEN GETDATE()
+       ELSE LAG(start_date) OVER (PARTITION BY colleague_id, pay_code ORDER BY start_date)
+  END AS effective_end_date
+FROM EffectiveDates
