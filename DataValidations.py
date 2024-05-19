@@ -1,7 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
-from pyspark.sql.window import Window
 from delta.tables import deltaTable
 import os
 import uuid
@@ -29,8 +28,8 @@ class SalaryJob:
         self.bravo_container_name = f"bravocontainer{self.loc}{self.env}"
         self.bravo_account_key = DBUtils(self.spark).secrets.get(scope=self.keyvault_scope, key=f"storage-{self.loc}-{self.env}")
         
-        self.alpha_storage_url = f"wasbs://{self.alpha_account_name}@{self.alpha_container_name}.blob.core.windows.net"
-        self.bravo_storage_url = f"wasbs://{self.bravo_account_name}@{self.bravo_container_name}.blob.core.windows.net"
+        self.alpha_storage_url = f"wasbs://{self.alpha_container_name}@{self.alpha_account_name}.blob.core.windows.net"
+        self.bravo_storage_url = f"wasbs://{self.bravo_container_name}@{self.bravo_account_name}.blob.core.windows.net"
         
         self.set_storage_config()
         
@@ -45,7 +44,7 @@ class SalaryJob:
         self.job_id = str(uuid.uuid4())
         self.target_system_type = "delta table"
         self.job_status = " "  # if successful then "Success" else "Failed"
-        self.load_type = " "
+        self.load_type = "overwrite"
         self.rows_processed = 0  # number of rows written by dataframe in delta table 
         self.job_start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.job_end_time = None
@@ -74,13 +73,11 @@ class SalaryJob:
         return df
     
     # Write to bravo storage using partition overwrite mode dynamic partition
-    def write_delta_table_overwrite(self, df, write_mode, partition_columns, delta_table_path):
-        self.load_type = write_mode
-        write_mode = "overwrite"
+    def write_delta_table_overwrite(self, df, partition_columns, delta_table_path):
         full_delta_table_path = f"{self.bravo_storage_url}/{delta_table_path}"
         try:
             df.write.format("delta") \
-                .mode(write_mode) \
+                .mode("overwrite") \
                 .partitionBy(partition_columns) \
                 .option("partitionOverwriteMode", "dynamic") \
                 .save(full_delta_table_path)  
@@ -89,34 +86,14 @@ class SalaryJob:
         except Exception as e:
             self.job_status = "Failed"
             print(f"Error writing to Delta table: {e}")
+            self.rows_processed = 0
         
         self.job_end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         metadata_df = self.log_metadata()
-        self.write_metadata_to_synapse(metadata_df)
         
+        self.write_metadata_to_synapse(metadata_df)
         return df
     
-    def write_delta_table_append(self, df, write_mode, partition_columns, delta_table_path):
-        self.load_type = write_mode
-        write_mode = "append"
-        full_delta_table_path = f"{self.bravo_storage_url}/{delta_table_path}"
-        try:
-            df.write.format("delta") \
-                .mode(write_mode) \
-                .partitionBy(partition_columns) \
-                .option("partitionOverwriteMode", "dynamic") \
-                .save(full_delta_table_path)  
-            self.job_status = "Success"
-            self.rows_processed = df.count()
-        except Exception as e:
-            self.job_status = "Failed"
-            print(f"Error writing to Delta table: {e}")
-        
-        self.job_end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        metadata_df = self.log_metadata()
-        self.write_metadata_to_synapse(metadata_df)
-        
-        return df
     
     # Log metadata
     def log_metadata(self):
@@ -130,9 +107,18 @@ class SalaryJob:
             StructField("JobDate", StringType(), False),
             StructField("LoadType", StringType(), False)
         ])
-        
+
+        if self.job_status is None and self.rows_processed is None and self.job_end_time is None and self.load_type == "overwrite":
+            self.job_status = write_delta_table_overwrite.job_status
+            self.rows_processed = write_delta_table_overwrite.rows_processed
+            self.job_end_time = write_delta_table_overwrite.job_end_time
+        else:
+            pass
+
         metadata = [(self.job_id, self.target_system_type, self.job_status, self.rows_processed, self.job_start_time, self.job_end_time, self.job_date, self.load_type)]
-        metadata_df = self.spark.createDataFrame([metadata])
+        
+        # Convert metadata to DataFrame with defined schema
+        metadata_df = self.spark.createDataFrame(metadata, schema)
         return metadata_df
 
     # Write metadata to Synapse table
@@ -154,5 +140,13 @@ if __name__ == "__main__":
     # Partition columns is a list of columns based on year, month, date
     partition_columns = ["year", "month", "date"]
     delta_table_path = "delta_table_path"
-    salary_job.write_delta_table(df, write_mode, partition_columns, delta_table_path)
+    
+    # Choose the write mode
+    write_mode = "overwrite"  # Change to "append" as needed
+
+    if write_mode == "overwrite":
+        salary_job.write_delta_table_overwrite(df, partition_columns, delta_table_path)
+    elif write_mode == "append":
+        salary_job.write_delta_table_append(df, partition_columns, delta_table_path)
+    
     spark.stop()
