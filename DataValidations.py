@@ -105,8 +105,19 @@ class SalaryJob:
         }
         # Convert metadata to DataFrame and write to Delta table (or any other logging mechanism)
         metadata_df = self.spark.createDataFrame([metadata])
-        metadata_df.write.format("delta").mode("append").save(f"{self.bravo_storage_url}/metadata_log")
-        print("Metadata logged successfully")
+
+    return metadata_df
+
+    # Write metaadta to Synapse table
+    def write_metadata_to_synapse(self, metadata_df):
+        metadata_df.write \
+            .format("com.databricks.spark.sqldw") \
+            .option("url", self.url) \
+            .option("dbtable", "dbo.job_metadata") \
+            .option("user", self.user_name) \
+            .option("password", self.password) \
+            .mode("append") \
+            .save()
 
 if __name__ == "__main__":
     spark = SparkSession.builder.appName("Synapse Connection Check").getOrCreate()
