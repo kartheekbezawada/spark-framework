@@ -45,6 +45,7 @@ class SalaryJob:
         self.job_id = str(uuid.uuid4())
         self.target_system_type = "delta table"
         self.job_status = " "  # if successful then "Success" else "Failed"
+        self.load_type = " "
         self.rows_processed = 0  # number of rows written by dataframe in delta table 
         self.job_start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.job_end_time = None
@@ -74,6 +75,8 @@ class SalaryJob:
     
     # Write to bravo storage using partition overwrite mode dynamic partition
     def write_delta_table(self, df, write_mode, partition_columns, delta_table_path):
+        self.load_type = write_mode
+        write_mode = "overwrite"
         full_delta_table_path = f"{self.bravo_storage_url}/{delta_table_path}"
         try:
             df.write.format("delta") \
@@ -88,7 +91,8 @@ class SalaryJob:
             print(f"Error writing to Delta table: {e}")
         
         self.job_end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.log_metadata()
+        metadata_df = self.log_metadata()
+        self.write_metadata_to_synapse(metadata_df)
         
         return df
     
@@ -101,14 +105,14 @@ class SalaryJob:
             "RowsProcessed": self.rows_processed,
             "JobStartTime": self.job_start_time,
             "JobEndTime": self.job_end_time,
-            "JobDate": self.job_date
+            "JobDate": self.job_date,
+            "LoadType": self.load_type
         }
         # Convert metadata to DataFrame and write to Delta table (or any other logging mechanism)
         metadata_df = self.spark.createDataFrame([metadata])
+        return metadata_df
 
-    return metadata_df
-
-    # Write metaadta to Synapse table
+    # Write metadata to Synapse table
     def write_metadata_to_synapse(self, metadata_df):
         metadata_df.write \
             .format("com.databricks.spark.sqldw") \
@@ -124,7 +128,6 @@ if __name__ == "__main__":
     salary_job = SalaryJob(spark)
     salary_job.synapse_connection()
     df = salary_job.read_alpha_storage()
-    write_mode = "overwrite"
     # Partition columns is a list of columns based on year, month, date
     partition_columns = ["year", "month", "date"]
     delta_table_path = "delta_table_path"
