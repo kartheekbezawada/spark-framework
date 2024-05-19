@@ -74,7 +74,7 @@ class SalaryJob:
         return df
     
     # Write to bravo storage using partition overwrite mode dynamic partition
-    def write_delta_table(self, df, write_mode, partition_columns, delta_table_path):
+    def write_delta_table_overwrite(self, df, write_mode, partition_columns, delta_table_path):
         self.load_type = write_mode
         write_mode = "overwrite"
         full_delta_table_path = f"{self.bravo_storage_url}/{delta_table_path}"
@@ -96,19 +96,42 @@ class SalaryJob:
         
         return df
     
+    def write_delta_table_append(self, df, write_mode, partition_columns, delta_table_path):
+        self.load_type = write_mode
+        write_mode = "append"
+        full_delta_table_path = f"{self.bravo_storage_url}/{delta_table_path}"
+        try:
+            df.write.format("delta") \
+                .mode(write_mode) \
+                .partitionBy(partition_columns) \
+                .option("partitionOverwriteMode", "dynamic") \
+                .save(full_delta_table_path)  
+            self.job_status = "Success"
+            self.rows_processed = df.count()
+        except Exception as e:
+            self.job_status = "Failed"
+            print(f"Error writing to Delta table: {e}")
+        
+        self.job_end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        metadata_df = self.log_metadata()
+        self.write_metadata_to_synapse(metadata_df)
+        
+        return df
+    
     # Log metadata
     def log_metadata(self):
-        metadata = {
-            "JobID": self.job_id,
-            "TargetSystemType": self.target_system_type,
-            "JobStatus": self.job_status,
-            "RowsProcessed": self.rows_processed,
-            "JobStartTime": self.job_start_time,
-            "JobEndTime": self.job_end_time,
-            "JobDate": self.job_date,
-            "LoadType": self.load_type
-        }
-        # Convert metadata to DataFrame and write to Delta table (or any other logging mechanism)
+        schema = StructType([
+            StructField("JobID", StringType(), False),
+            StructField("TargetSystemType", StringType(), False),
+            StructField("JobStatus", StringType(), False),
+            StructField("RowsProcessed", IntegerType(), False),
+            StructField("JobStartTime", StringType(), False),
+            StructField("JobEndTime", StringType(), False),
+            StructField("JobDate", StringType(), False),
+            StructField("LoadType", StringType(), False)
+        ])
+        
+        metadata = [(self.job_id, self.target_system_type, self.job_status, self.rows_processed, self.job_start_time, self.job_end_time, self.job_date, self.load_type)]
         metadata_df = self.spark.createDataFrame([metadata])
         return metadata_df
 
