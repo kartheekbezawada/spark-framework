@@ -1,7 +1,6 @@
 import json
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, max
-from pyspark.sql.types import *
 from delta.tables import DeltaTable
 from pyspark.sql.utils import AnalysisException
 
@@ -106,6 +105,15 @@ class DataMigration:
         except AnalysisException as e:
             print(f"Error in writing partition: {e}")
 
+    def _process_incremental_table(self, schema_name, table_name, partition_column, num_partitions, incremental_column, delta_path):
+        last_max_value = self._get_last_max_value(delta_path, incremental_column)
+        if last_max_value is None:
+            df = self._read_full_data_in_partitions(schema_name, table_name, partition_column, num_partitions)
+        else:
+            df = self._read_incremental_full_table(schema_name, table_name, incremental_column, last_max_value)
+        # Write each partition individually
+        df.foreachPartition(lambda partition: self._write_partition(partition, delta_path, "append"))
+
     def _process_table(self, schema_name, table_name, partition_column, num_partitions, write_mode, incremental_column=None):
         delta_path = f"abfss://{self.key_vault_scope}@datalake.dfs.core.windows.net/{table_name}"
         
@@ -114,13 +122,7 @@ class DataMigration:
             self._write_overwrite(full_df, delta_path)
         
         elif write_mode == "append":
-            last_max_value = self._get_last_max_value(delta_path, incremental_column)
-            if last_max_value is not None:
-                df = self._read_incremental_full_table(schema_name, table_name, incremental_column, last_max_value)
-            else:
-                df = self._read_full_data_in_partitions(schema_name, table_name, partition_column, num_partitions)
-            # Write each partition individually
-            df.foreachPartition(lambda partition: self._write_partition(partition, delta_path, "append"))
+            self._process_incremental_table(schema_name, table_name, partition_column, num_partitions, incremental_column, delta_path)
 
     def run(self, tables):
         for table in tables:
