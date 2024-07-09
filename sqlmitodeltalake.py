@@ -45,76 +45,42 @@ class DataMigration:
             .option("numPartitions", num_partitions) \
             .load()
 
-    def _read_incremental_data(self, schema_name, table_name, incremental_column, delta_path, partition_column, num_partitions):
+    def _get_last_max_value(self, delta_path, incremental_column):
         try:
             last_max_value = self.spark.read.format("delta").load(delta_path) \
                 .select(max(col(incremental_column)).alias("last_max_value")) \
                 .collect()[0]["last_max_value"]
         except AnalysisException:
             last_max_value = None
+        return last_max_value
 
-        if last_max_value is not None:
-            dbtable = f"{schema_name}.{table_name}"
-            query = f"(SELECT * FROM {dbtable} WHERE {incremental_column} > '{last_max_value}') AS src"
-            return self.spark.read \
-                .format("jdbc") \
-                .option("url", self.jdbc_url) \
-                .option("dbtable", query) \
-                .option("user", self.jdbc_username) \
-                .option("password", self.jdbc_password) \
-                .load()
-        else:
-            # No delta table or empty delta table, read full data
-            query = f"(SELECT MIN({partition_column}) AS min_value, MAX({partition_column}) AS max_value FROM {schema_name}.{table_name}) AS bounds"
-            bounds_df = self.spark.read \
-                .format("jdbc") \
-                .option("url", self.jdbc_url) \
-                .option("dbtable", query) \
-                .option("user", self.jdbc_username) \
-                .option("password", self.jdbc_password) \
-                .load()
+    def _read_incremental_full_table(self, schema_name, table_name, incremental_column, last_max_value):
+        dbtable = f"{schema_name}.{table_name}"
+        query = f"(SELECT * FROM {dbtable} WHERE {incremental_column} > '{last_max_value}') AS src"
+        return self.spark.read \
+            .format("jdbc") \
+            .option("url", self.jdbc_url) \
+            .option("dbtable", query) \
+            .option("user", self.jdbc_username) \
+            .option("password", self.jdbc_password) \
+            .load()
+    
+    def _read_full_data_in_partitions(self, schema_name, table_name, partition_column, num_partitions):
+        dbtable = f"{schema_name}.{table_name}"
+        query = f"(SELECT MIN({partition_column}) AS min_value, MAX({partition_column}) AS max_value FROM {dbtable}) AS bounds"
+        bounds_df = self.spark.read \
+            .format("jdbc") \
+            .option("url", self.jdbc_url) \
+            .option("dbtable", query) \
+            .option("user", self.jdbc_username) \
+            .option("password", self.jdbc_password) \
+            .load()
 
-            bounds = bounds_df.collect()[0]
-            lower_bound = bounds["min_value"]
-            upper_bound = bounds["max_value"]
+        bounds = bounds_df.collect()[0]
+        lower_bound = bounds["min_value"]
+        upper_bound = bounds["max_value"]
 
-            return self._read_data_in_partitions(schema_name, table_name, partition_column, lower_bound, upper_bound, num_partitions)
-
-    def _map_data_types(self, df):
-        type_mapping = {
-            'int': IntegerType(),
-            'bigint': LongType(),
-            'smallint': ShortType(),
-            'tinyint': ByteType(),
-            'bit': BooleanType(),
-            'float': FloatType(),
-            'real': FloatType(),
-            'decimal': DecimalType(),
-            'numeric': DecimalType(),
-            'smallmoney': DecimalType(),
-            'money': DecimalType(),
-            'datetime': TimestampType(),
-            'datetime2': TimestampType(),
-            'smalldatetime': TimestampType(),
-            'date': DateType(),
-            'time': StringType(),
-            'char': StringType(),
-            'varchar': StringType(),
-            'text': StringType(),
-            'nchar': StringType(),
-            'nvarchar': StringType(),
-            'ntext': StringType(),
-            'binary': BinaryType(),
-            'varbinary': BinaryType(),
-            'image': BinaryType()
-        }
-
-        for field in df.schema.fields:
-            sql_type = field.dataType.simpleString()
-            if sql_type in type_mapping:
-                df = df.withColumn(field.name, col(field.name).cast(type_mapping[sql_type]))
-
-        return df
+        return self._read_data_in_partitions(schema_name, table_name, partition_column, lower_bound, upper_bound, num_partitions)
 
     def _write_overwrite(self, partition_df, delta_path):
         partition_df.write \
@@ -128,33 +94,13 @@ class DataMigration:
             .mode("append") \
             .save(delta_path)
 
-    def _write_merge(self, partition_df, delta_path):
-        delta_table = DeltaTable.forPath(self.spark, delta_path)
-        merge_condition = " AND ".join([f"target.{col} = source.{col}" for col in partition_df.columns if col in delta_table.toDF().columns])
-        delta_table.alias("target").merge(
-            partition_df.alias("source"),
-            merge_condition
-        ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
-
-    def _write_partition_overwrite(self, partition_df, delta_path):
-        partition_df.write \
-            .format("delta") \
-            .mode("overwrite") \
-            .option("replaceWhere", "true") \
-            .save(delta_path)
-
     def _write_partition(self, partition, delta_path, write_mode):
         try:
             partition_df = self.spark.createDataFrame(partition)
-            partition_df = self._map_data_types(partition_df)
             if write_mode == "overwrite":
                 self._write_overwrite(partition_df, delta_path)
             elif write_mode == "append":
                 self._write_append(partition_df, delta_path)
-            elif write_mode == "merge":
-                self._write_merge(partition_df, delta_path)
-            elif write_mode == "partition_overwrite":
-                self._write_partition_overwrite(partition_df, delta_path)
             else:
                 raise ValueError(f"Unsupported write mode: {write_mode}")
         except AnalysisException as e:
@@ -163,36 +109,18 @@ class DataMigration:
     def _process_table(self, schema_name, table_name, partition_column, num_partitions, write_mode, incremental_column=None):
         delta_path = f"abfss://{self.key_vault_scope}@datalake.dfs.core.windows.net/{table_name}"
         
-        if write_mode in ["overwrite", "append"]:
-            # Full load
-            df = self._read_full_data(schema_name, table_name)
-            # Convert data types and write each partition individually
-            df.foreachPartition(lambda partition: self._write_partition(partition, delta_path, write_mode))
-
-        elif write_mode == "merge" and incremental_column:
-            # Incremental load
-            df = self._read_incremental_data(schema_name, table_name, incremental_column, delta_path, partition_column, num_partitions)
-            # Convert data types and write each partition individually
-            df.foreachPartition(lambda partition: self._write_partition(partition, delta_path, write_mode))
+        if write_mode == "overwrite":
+            full_df = self._read_full_data(schema_name, table_name)
+            self._write_overwrite(full_df, delta_path)
         
-        elif write_mode == "partition_overwrite":
-            # Partition overwrite load
-            query = f"(SELECT MIN({partition_column}) AS min_value, MAX({partition_column}) AS max_value FROM {schema_name}.{table_name}) AS bounds"
-            bounds_df = self.spark.read \
-                .format("jdbc") \
-                .option("url", self.jdbc_url) \
-                .option("dbtable", query) \
-                .option("user", self.jdbc_username) \
-                .option("password", self.jdbc_password) \
-                .load()
-
-            bounds = bounds_df.collect()[0]
-            lower_bound = bounds["min_value"]
-            upper_bound = bounds["max_value"]
-
-            df = self._read_data_in_partitions(schema_name, table_name, partition_column, lower_bound, upper_bound, num_partitions)
-            # Convert data types and write each partition individually
-            df.foreachPartition(lambda partition: self._write_partition(partition, delta_path, write_mode))
+        elif write_mode == "append":
+            last_max_value = self._get_last_max_value(delta_path, incremental_column)
+            if last_max_value is not None:
+                df = self._read_incremental_full_table(schema_name, table_name, incremental_column, last_max_value)
+            else:
+                df = self._read_full_data_in_partitions(schema_name, table_name, partition_column, num_partitions)
+            # Write each partition individually
+            df.foreachPartition(lambda partition: self._write_partition(partition, delta_path, "append"))
 
     def run(self, tables):
         for table in tables:
@@ -212,9 +140,9 @@ if __name__ == "__main__":
     tables = [
         {"schema_name": "schema1", "table_name": "table1", "partition_column": "id", "num_partitions": 256, "write_mode": "overwrite"},
         {"schema_name": "schema1", "table_name": "table2", "partition_column": "id", "num_partitions": 256, "write_mode": "append"},
-        {"schema_name": "schema2", "table_name": "table3", "partition_column": "id", "num_partitions": 256, "write_mode": "merge", "incremental_column": "timestamp_column"},
-        {"schema_name": "schema2", "table_name": "table4", "partition_column": "id", "num_partitions": 256, "write_mode": "partition_overwrite"},
-        {"schema_name": "schema2", "table_name": "table5", "partition_column": "id", "num_partitions": 256, "write_mode": "merge", "incremental_column": "timestamp_column"}
+        {"schema_name": "schema2", "table_name": "table3", "partition_column": "id", "num_partitions": 256, "write_mode": "append", "incremental_column": "timestamp_column"},
+        {"schema_name": "schema2", "table_name": "table4", "partition_column": "id", "num_partitions": 256, "write_mode": "overwrite"},
+        {"schema_name": "schema2", "table_name": "table5", "partition_column": "id", "num_partitions": 256, "write_mode": "append", "incremental_column": "timestamp_column"}
     ]
 
     data_migration.run(tables)
