@@ -1,5 +1,5 @@
 pip install azure-identity
-pip install azure-keyvault-secrets
+`1qw23yh6uhjm pip install azure-keyvault-secrets
 
 
 from office365.sharepoint.client_context import ClientContext
