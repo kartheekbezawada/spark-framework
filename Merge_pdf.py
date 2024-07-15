@@ -2,7 +2,7 @@ import os
 from PyPDF2 import PdfReader, PdfWriter
 
 # Define the directory path (change 'downloads' if needed)
-downloads_folder = r'C:\New folder (2)'
+downloads_folder = r'C:\Users\Aryan\OneDrive\Anupama ILR\bank statements'
 
 # Create a PdfWriter object for the merged PDF
 pdf_writer = PdfWriter()
