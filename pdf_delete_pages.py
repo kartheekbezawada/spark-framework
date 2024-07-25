@@ -20,13 +20,13 @@ def delete_pdf_pages(input_pdf_path, pages_to_delete, output_pdf_path):
         pdf_writer.write(output_file)
 
 # Define the input PDF file path (change 'merged_all_pages.pdf' if needed)
-input_pdf_path = r'C:\Users\Aryan\OneDrive\Anupama ILR\bank statements\merged_all_pages.pdf'
+input_pdf_path = r'C:\Users\Aryan\OneDrive\Anupama ILR\Combining\7.6_Kartheek_Llyolds_CC.pdf'
 
 # Define the pages to delete (0-based index)
-pages_to_delete = [1,3,5,7,9,12,14,16,18,20,22,24,28,30,33]  
+pages_to_delete = [8,9]
 
 # Define the output PDF file path (change 'remaining_pages.pdf' if needed)
-output_pdf_path = r'C:\Users\Aryan\OneDrive\Anupama ILR\bank statements\merged_all_pages.pdf'
+output_pdf_path = r'C:\Users\Aryan\OneDrive\Anupama ILR\Combining\7.6_Kartheek_Llyolds_CC3.pdf'
 
 # Call the function to delete the specified pages
 delete_pdf_pages(input_pdf_path, pages_to_delete, output_pdf_path)

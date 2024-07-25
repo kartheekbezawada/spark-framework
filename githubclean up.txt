@@ -1,0 +1,27 @@
+Subject: Request to Clean Up Feature Branches on GitHub Repository
+
+Hi Team,
+
+I hope this email finds you well.
+
+I am writing to request a clean-up of all feature branches in our GitHub repository [Repository Name]. Over time, many feature branches have accumulated, some of which are no longer needed. Cleaning up these branches will help us maintain a more organized and efficient workflow.
+
+Please take the following steps:
+
+Review Your Branches: Identify any feature branches you have been working on.
+Merge or Archive: If your branch contains valuable work that should be merged into the main branch, please do so at your earliest convenience. If the work is outdated or no longer relevant, please archive or delete the branch.
+Delete Unnecessary Branches: Once you have reviewed and taken action on your branches, please delete any branches that are no longer needed.
+To delete a branch in GitHub, you can follow these steps:
+
+Navigate to the main page of the repository.
+Click on the “Branches” tab.
+Find the branch you want to delete and click the delete icon (a trash can).
+Please complete this clean-up by [specific deadline, e.g., end of this week, MM/DD/YYYY].
+
+Thank you for your cooperation and assistance in keeping our repository organized.
+
+Best regards,
+
+[Your Full Name]
+[Your Job Title]
+[Your Contact Information]
