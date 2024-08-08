@@ -1,3 +1,6 @@
+
+# this is file is used to zip and unzip files in azure blob storage
+# this also contains the code to copy files from one container to another container in azure blob storage
 from pyspark.sql import SparkSession
 import zipfile
 import io
