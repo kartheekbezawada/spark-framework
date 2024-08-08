@@ -15,13 +15,13 @@ def extract_pdf_page(input_pdf_path, page_to_extract, output_pdf_path):
         pdf_writer.write(output_file)
 
 # Define the input PDF file path (change 'merged_all_pages.pdf' if needed)
-input_pdf_path = r'C:\Users\Aryan\OneDrive\Anupama ILR\Combining\7.1_Combined Council tax.pdf'
+input_pdf_path = r'C:/Users/Aryan/OneDrive/Anupama ILR/Combining/Marriage_Pics.pdf'
 
 # Define the page to extract (0-based index)
-page_to_extract = 0  # Extracts the 6th page (index 5)
+page_to_extract = 1  # Extracts the 6th page (index 5)
 
 # Define the output PDF file path (change 'extracted_page.pdf' if needed)
-output_pdf_path = r'C:\Users\Aryan\OneDrive\Anupama ILR\Combining\7.1_Combined Council tax2.pdf'
+output_pdf_path = r'C:/Users/Aryan/OneDrive/Anupama ILR/Combining/Marriage_Pics2.pdf'
 
 # Call the function to extract the specified page
 extract_pdf_page(input_pdf_path, page_to_extract, output_pdf_path)
