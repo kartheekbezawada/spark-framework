@@ -1,0 +1,29 @@
+name: Validate Pull Request
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR Description for Required Content
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const requiredWords = ["lower environment PR", "Screenshot"];
+            const hasRequiredContent = requiredWords.every(word => pr.body.includes(word));
+
+            if (!hasRequiredContent) {
+              throw new Error("PR does not include required lower environment details or evidence of testing.");
+            }
+            
+      - name: Ensure Screenshot is Attached
+        run: |
+          if ! grep -q '![Screenshot]' <<< "$PR_BODY"; then
+            echo "Error: Screenshot not found in PR description." >&2
+            exit 1
+          fi
