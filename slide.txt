@@ -1,0 +1,104 @@
+Slide 1: Title Slide
+
+Title: Data Migration in Azure Databricks using Delta Lake
+Subtitle: Implementation and Unit Testing Overview
+Presented by: [Your Name]
+
+Slide 2: Introduction
+
+Title: Project Overview
+
+Objective: Seamless migration of data from Azure SQL MI to Delta Lake.
+
+Technologies: PySpark, Delta Lake, Azure Key Vault, Azure SQL MI.
+
+Slide 3: Architecture Overview
+
+Title: System Architecture
+
+Source: Azure SQL Managed Instance
+
+Destination: Delta Lake on Azure Data Lake Storage
+
+Tools: PySpark for data processing, Azure Key Vault for secure credential management.
+
+Slide 4: Code Structure
+
+Title: Code Overview
+
+Class: DataMigration
+
+Initialize Spark Session and environment configurations.
+
+Methods for reading from SQL, writing to Delta Lake.
+
+Handles both full and incremental data loads.
+
+Slide 5: Key Functionalities
+
+Title: Key Functionalities
+
+Full Data Load: Reads entire tables and writes to Delta Lake.
+
+Incremental Load: Fetches only new/updated data based on a column.
+
+Partitioned Reads/Writes: Optimizes large data operations using partitions.
+
+Slide 6: Incremental Data Handling
+
+Title: Handling Incremental Loads
+
+Retrieve last maximum value from Delta Lake.
+
+Query Azure SQL MI for records greater than the max value.
+
+Write incremental data to Delta Lake with partitioning.
+
+Slide 7: Unit Testing Overview
+
+Title: Unit Testing Strategy
+
+Framework: Python's unittest
+
+Mocking: Using unittest.mock to mock external services (Azure, Databricks).
+
+Test Coverage: Initialization, data read/write operations, incremental logic.
+
+Slide 8: Sample Unit Tests
+
+Title: Example Unit Tests
+
+Test Spark session initialization.
+
+Test reading from Azure SQL MI with mocked data.
+
+Test writing to Delta Lake with partitioning.
+
+Test incremental load logic.
+
+Slide 9: Results & Validation
+
+Title: Test Results & Validation
+
+All unit tests executed successfully.
+
+Ensures robust data migration with error handling and retries.
+
+Scalable for both small dimension tables and large fact tables.
+
+Slide 10: Conclusion
+
+Title: Summary & Next Steps
+
+Efficient data migration pipeline established.
+
+Secure and scalable architecture using Azure services.
+
+Future Enhancements:
+
+Add logging and monitoring.
+
+Implement error retries and notifications.
+
+Thank You!
+
